@@ -1,0 +1,8 @@
+pytest
+pytest-asyncio
+httpx
+websockets
+python-dotenv
+pytest-cov
+pytest-html
+pytest-xdist

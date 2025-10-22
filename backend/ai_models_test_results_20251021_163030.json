@@ -1,0 +1,65 @@
+{
+  "timestamp": "2025-10-21T16:29:17.447431",
+  "ollama": {
+    "status": "failed",
+    "tests": [
+      {
+        "test": "health_check",
+        "status": "passed",
+        "result": "Found 3 models: ['llama3.1:8b', 'nomic-embed-text:latest', 'llama3.2:latest']"
+      },
+      {
+        "test": "connection_error",
+        "status": "failed",
+        "error": ""
+      }
+    ],
+    "errors": [
+      "Connection error: "
+    ]
+  },
+  "maverick": {
+    "status": "passed",
+    "tests": [
+      {
+        "test": "imports",
+        "status": "passed",
+        "result": "Required libraries available"
+      },
+      {
+        "test": "device_check",
+        "status": "passed",
+        "result": "Using device: cpu"
+      },
+      {
+        "test": "tokenizer_load",
+        "status": "passed",
+        "result": "Tokenizer loaded: microsoft/DialoGPT-small"
+      },
+      {
+        "test": "tokenization",
+        "status": "passed",
+        "result": "Input tokens: 7"
+      },
+      {
+        "test": "simulated_generation",
+        "status": "passed",
+        "result": {
+          "content_length": 118,
+          "response_preview": "Hello! I'm a test AI model. You asked: 'Hello! How are you today?'. This is a simulated response for testing purposes."
+        }
+      }
+    ],
+    "errors": []
+  },
+  "summary": {
+    "total_services": 2,
+    "working_services": 1,
+    "total_tests": 7,
+    "passed_tests": 6,
+    "success_rate": 85.71,
+    "ollama_working": false,
+    "maverick_working": true,
+    "overall_status": "PASS"
+  }
+}

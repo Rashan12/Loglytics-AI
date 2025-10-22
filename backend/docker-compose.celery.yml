@@ -1,0 +1,121 @@
+version: '3.8'
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: loglytics-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  celery-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: loglytics-celery-worker
+    command: celery -A app.celery_app worker --loglevel=info --concurrency=4 --queues=high-priority,default,low-priority
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=${REDIS_URL}
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL:-${REDIS_URL}}
+      - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-${REDIS_URL}}
+      - SENDGRID_API_KEY=${SENDGRID_API_KEY}
+      - JIRA_URL=${JIRA_URL}
+      - JIRA_USERNAME=${JIRA_USERNAME}
+      - JIRA_API_TOKEN=${JIRA_API_TOKEN}
+    volumes:
+      - ./uploads:/app/uploads
+      - ./logs:/app/logs
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 1G
+
+  celery-beat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: loglytics-celery-beat
+    command: celery -A app.celery_app beat --loglevel=info --scheduler=celery.beat:PersistentScheduler
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=${REDIS_URL}
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL:-${REDIS_URL}}
+      - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-${REDIS_URL}}
+      - SENDGRID_API_KEY=${SENDGRID_API_KEY}
+      - JIRA_URL=${JIRA_URL}
+      - JIRA_USERNAME=${JIRA_USERNAME}
+      - JIRA_API_TOKEN=${JIRA_API_TOKEN}
+    volumes:
+      - ./uploads:/app/uploads
+      - ./logs:/app/logs
+      - celery_beat_data:/app/celerybeat-schedule
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  celery-flower:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: loglytics-celery-flower
+    command: celery -A app.celery_app flower --port=5555
+    ports:
+      - "5555:5555"
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=${REDIS_URL}
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL:-${REDIS_URL}}
+      - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-${REDIS_URL}}
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # High priority worker for critical tasks
+  celery-worker-high:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: loglytics-celery-worker-high
+    command: celery -A app.celery_app worker --loglevel=info --concurrency=2 --queues=high-priority
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=${REDIS_URL}
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL:-${REDIS_URL}}
+      - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-${REDIS_URL}}
+      - SENDGRID_API_KEY=${SENDGRID_API_KEY}
+      - JIRA_URL=${JIRA_URL}
+      - JIRA_USERNAME=${JIRA_USERNAME}
+      - JIRA_API_TOKEN=${JIRA_API_TOKEN}
+    volumes:
+      - ./uploads:/app/uploads
+      - ./logs:/app/logs
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 512M
+
+volumes:
+  redis_data:
+  celery_beat_data:
