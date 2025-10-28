@@ -1,5 +1,5 @@
-from sqlalchemy.orm import Session
-from sqlalchemy import func, desc, and_
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, func, desc, and_
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
 import json
@@ -13,7 +13,7 @@ from app.services.rag.rag_service import RAGService
 
 
 class AnalyticsService:
-    def __init__(self, db: Session):
+    def __init__(self, db: AsyncSession):
         self.db = db
         self.llm_service = UnifiedLLMService(db)
         self.rag_service = RAGService(db)
@@ -31,8 +31,8 @@ class AnalyticsService:
         )
         
         self.db.add(analysis)
-        self.db.commit()
-        self.db.refresh(analysis)
+        await self.db.commit()
+        await self.db.refresh(analysis)
         
         # Process analysis asynchronously
         await self.process_analysis(analysis.id)
@@ -41,13 +41,18 @@ class AnalyticsService:
 
     async def process_analysis(self, analysis_id: int):
         """Process analysis based on type"""
-        analysis = self.db.query(Analysis).filter(Analysis.id == analysis_id).first()
+        # Use async query
+        result = await self.db.execute(
+            select(Analysis).where(Analysis.id == analysis_id)
+        )
+        analysis = result.scalar_one_or_none()
+        
         if not analysis:
             return
         
         try:
             analysis.status = "running"
-            self.db.commit()
+            await self.db.commit()
             
             start_time = datetime.utcnow()
             
@@ -66,19 +71,20 @@ class AnalyticsService:
             analysis.completed_at = datetime.utcnow()
             analysis.execution_time = (datetime.utcnow() - start_time).total_seconds()
             
-            self.db.commit()
+            await self.db.commit()
             
         except Exception as e:
             analysis.status = "failed"
             analysis.error_message = str(e)
-            self.db.commit()
+            await self.db.commit()
 
     async def analyze_patterns(self, log_file_id: int, pattern_type: str = "error") -> Dict[str, Any]:
         """Analyze log patterns"""
-        # Get log entries
-        log_entries = self.db.query(LogEntry).filter(
-            LogEntry.log_file_id == log_file_id
-        ).all()
+        # Get log entries using async query
+        result = await self.db.execute(
+            select(LogEntry).where(LogEntry.log_file_id == log_file_id)
+        )
+        log_entries = result.scalars().all()
         
         if not log_entries:
             return {"error": "No log entries found"}
@@ -119,9 +125,10 @@ class AnalyticsService:
 
     async def detect_anomalies(self, log_file_id: int, threshold: float = 0.8) -> Dict[str, Any]:
         """Detect anomalies in logs"""
-        log_entries = self.db.query(LogEntry).filter(
-            LogEntry.log_file_id == log_file_id
-        ).all()
+        result = await self.db.execute(
+            select(LogEntry).where(LogEntry.log_file_id == log_file_id)
+        )
+        log_entries = result.scalars().all()
         
         if not log_entries:
             return {"error": "No log entries found"}
@@ -165,9 +172,10 @@ class AnalyticsService:
 
     async def analyze_trends(self, log_file_id: int) -> Dict[str, Any]:
         """Analyze trends in logs"""
-        log_entries = self.db.query(LogEntry).filter(
-            LogFile.id == log_file_id
-        ).all()
+        result = await self.db.execute(
+            select(LogEntry).where(LogEntry.log_file_id == log_file_id)
+        )
+        log_entries = result.scalars().all()
         
         if not log_entries:
             return {"error": "No log entries found"}
@@ -222,9 +230,10 @@ class AnalyticsService:
 
     async def general_analysis(self, log_file_id: int) -> Dict[str, Any]:
         """Perform general log analysis"""
-        log_entries = self.db.query(LogEntry).filter(
-            LogEntry.log_file_id == log_file_id
-        ).all()
+        result = await self.db.execute(
+            select(LogEntry).where(LogEntry.log_file_id == log_file_id)
+        )
+        log_entries = result.scalars().all()
         
         if not log_entries:
             return {"error": "No log entries found"}
@@ -268,35 +277,48 @@ class AnalyticsService:
     async def get_overview_stats(self, log_file_id: Optional[int], days: int, user_id: int) -> Dict[str, Any]:
         """Get overview statistics"""
         # Base query
-        query = self.db.query(LogEntry)
+        query = select(LogEntry)
         
         if log_file_id:
-            query = query.filter(LogEntry.log_file_id == log_file_id)
+            query = query.where(LogEntry.log_file_id == log_file_id)
         else:
-            # Get all log files for user
-            user_log_files = self.db.query(LogFile).filter(LogFile.user_id == user_id).all()
+            # Get all log files for user using async
+            result = await self.db.execute(
+                select(LogFile).where(LogFile.user_id == user_id)
+            )
+            user_log_files = result.scalars().all()
             log_file_ids = [lf.id for lf in user_log_files]
-            query = query.filter(LogEntry.log_file_id.in_(log_file_ids))
+            query = query.where(LogEntry.log_file_id.in_(log_file_ids))
         
         # Filter by date range
         start_date = datetime.utcnow() - timedelta(days=days)
-        query = query.filter(LogEntry.created_at >= start_date)
+        query = query.where(LogEntry.created_at >= start_date)
         
-        # Get statistics
-        total_entries = query.count()
-        error_entries = query.filter(LogEntry.level.in_(['ERROR', 'FATAL'])).count()
-        warning_entries = query.filter(LogEntry.level.in_(['WARN', 'WARNING'])).count()
+        # Get statistics using async queries
+        total_result = await self.db.execute(select(func.count()).select_from(query))
+        total_entries = total_result.scalar() or 0
+        
+        error_query = query.where(LogEntry.level.in_(['ERROR', 'FATAL']))
+        error_result = await self.db.execute(select(func.count()).select_from(error_query))
+        error_entries = error_result.scalar() or 0
+        
+        warning_query = query.where(LogEntry.level.in_(['WARN', 'WARNING']))
+        warning_result = await self.db.execute(select(func.count()).select_from(warning_query))
+        warning_entries = warning_result.scalar() or 0
         
         # Recent activity (last 24 hours)
         recent_start = datetime.utcnow() - timedelta(hours=24)
-        recent_entries = query.filter(LogEntry.created_at >= recent_start).count()
+        recent_query = query.where(LogEntry.created_at >= recent_start)
+        recent_result = await self.db.execute(select(func.count()).select_from(recent_query))
+        recent_entries = recent_result.scalar() or 0
         
         # Top error sources
-        top_sources = query.filter(LogEntry.level.in_(['ERROR', 'FATAL'])).group_by(
-            LogEntry.source
-        ).with_entities(
+        top_sources_query = error_query.group_by(LogEntry.source).with_only_columns(
             LogEntry.source, func.count(LogEntry.id).label('count')
-        ).order_by(desc('count')).limit(5).all()
+        ).order_by(desc('count')).limit(5)
+        
+        top_result = await self.db.execute(top_sources_query)
+        top_sources = top_result.all()
         
         return {
             "total_entries": total_entries,

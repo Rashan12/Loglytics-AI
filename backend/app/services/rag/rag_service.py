@@ -5,7 +5,7 @@ Main RAG orchestration service
 
 import logging
 from typing import List, Dict, Any, Optional
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.rag.rag_pipeline import RAGPipeline, RAGQuery, RAGResponse
 from app.services.rag.retrieval_service import RetrievalService
@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 class RAGService:
     """Main RAG orchestration service"""
     
-    def __init__(self, db: Session):
+    def __init__(self, db: AsyncSession):
         self.db = db
         self.rag_pipeline = RAGPipeline(db)
         self.retrieval_service = RetrievalService(db)
@@ -120,6 +120,52 @@ class RAGService:
             
         except Exception as e:
             logger.error(f"Error indexing log file: {e}")
+            return {"error": str(e)}
+    
+    async def index_conversation_message(
+        self,
+        message_id: str,
+        conversation_id: str,
+        user_id: str,
+        content: str,
+        role: str,
+        project_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Index a conversation message for RAG context
+        
+        Args:
+            message_id: Message ID
+            conversation_id: Conversation ID
+            user_id: User ID
+            content: Message content
+            role: Message role (user/assistant)
+            project_id: Project ID (optional)
+            
+        Returns:
+            Indexing result
+        """
+        try:
+            # Use the vector store to add the message
+            result = await self.vector_store.add_vector(
+                content=content,
+                metadata={
+                    "message_id": message_id,
+                    "conversation_id": conversation_id,
+                    "user_id": user_id,
+                    "role": role,
+                    "project_id": project_id,
+                    "type": "conversation_message"
+                },
+                project_id=project_id or "default",
+                user_id=user_id
+            )
+            
+            logger.info(f"Indexed conversation message {message_id} for user {user_id}")
+            return {"success": True, "message_id": message_id}
+            
+        except Exception as e:
+            logger.error(f"Error indexing conversation message: {e}")
             return {"error": str(e)}
     
     async def reindex_log_file(

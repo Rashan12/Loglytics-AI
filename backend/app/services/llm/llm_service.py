@@ -9,13 +9,13 @@ import logging
 from typing import Dict, List, Optional, Any, AsyncGenerator, Union
 from dataclasses import dataclass
 from enum import Enum
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.user import User, SubscriptionTier
 from app.models.usage_tracking import UsageTracking
 from app.schemas.user import UserResponse
 from app.services.llm.ollama_client import OllamaClient
-from app.services.llm.maverick_client import MaverickClient
+from app.services.llm.openrouter_client import OpenRouterClient
 from app.services.llm.prompt_templates import PromptTemplates
 from app.services.llm.response_parser import ResponseParser
 from app.config import settings
@@ -67,21 +67,21 @@ class LLMUsage:
 class UnifiedLLMService:
     """Unified LLM service that handles multiple model providers"""
     
-    def __init__(self, db: Session):
+    def __init__(self, db: AsyncSession):
         self.db = db
         self.ollama_client = OllamaClient()
-        self.maverick_client = MaverickClient()
+        self.openrouter_client = OpenRouterClient()  # Use OpenRouter for Llama 4 Maverick
         self.prompt_templates = PromptTemplates()
         self.response_parser = ResponseParser()
         
         # Model availability tracking
         self._model_availability = {
             "ollama": False,
-            "maverick": False
+            "openrouter": False  # Changed from "maverick" to "openrouter"
         }
         
-        # Initialize clients
-        asyncio.create_task(self._initialize_clients())
+        # Initialize clients synchronously
+        self._initialized = False
     
     async def _initialize_clients(self):
         """Initialize all LLM clients"""
@@ -90,18 +90,30 @@ class UnifiedLLMService:
             self._model_availability["ollama"] = await self.ollama_client.health_check()
             logger.info(f"Ollama availability: {self._model_availability['ollama']}")
             
-            # Check Maverick availability
-            self._model_availability["maverick"] = await self.maverick_client.health_check()
-            logger.info(f"Maverick availability: {self._model_availability['maverick']}")
+            # Check OpenRouter (Llama 4 Maverick) availability
+            self._model_availability["openrouter"] = await self.openrouter_client.health_check()
+            logger.info(f"OpenRouter availability: {self._model_availability['openrouter']}")
+            
+            # Log configuration status
+            if not self._model_availability["openrouter"]:
+                logger.warning("OpenRouter API not available - check your API key configuration")
+                logger.warning("Please set OPENROUTER_API_KEY environment variable")
             
         except Exception as e:
             logger.error(f"Error initializing LLM clients: {e}")
+    
+    async def ensure_initialized(self):
+        """Ensure clients are initialized before use"""
+        if not self._initialized:
+            await self._initialize_clients()
+            self._initialized = True
     
     async def generate_response(
         self,
         request: LLMRequest,
         user: UserResponse,
-        db: Session
+        db: AsyncSession,
+        rag_context: Optional[str] = None
     ) -> Union[LLMResponse, AsyncGenerator[LLMResponse, None]]:
         """
         Generate LLM response based on user's selected model
@@ -115,6 +127,9 @@ class UnifiedLLMService:
             LLM response or async generator for streaming
         """
         try:
+            # Ensure clients are initialized
+            await self.ensure_initialized()
+            
             # Check rate limiting based on user tier
             if not await self._check_rate_limits(user, request.task, db):
                 raise ValueError("Rate limit exceeded for user tier")
@@ -123,7 +138,7 @@ class UnifiedLLMService:
             model_provider = await self._select_model(user, request.task)
             
             # Prepare prompt with context
-            full_prompt = await self._prepare_prompt(request, user)
+            full_prompt = await self._prepare_prompt(request, user, rag_context)
             
             # Generate response
             if request.stream:
@@ -141,21 +156,19 @@ class UnifiedLLMService:
     
     async def _select_model(self, user: UserResponse, task: LLMTask) -> str:
         """Select appropriate model based on user tier and availability"""
-        # Pro users can use Maverick if available
-        if user.subscription_tier == SubscriptionTier.PRO and self._model_availability["maverick"]:
-            return "maverick"
+        # Prioritize OpenRouter (Llama 4 Maverick) as default for all users
+        if self._model_availability["openrouter"]:
+            logger.info("Using OpenRouter (Llama 4 Maverick) as default model")
+            return "openrouter"
         
-        # Free users and fallback to Ollama
+        # Fallback to Ollama for local development
         if self._model_availability["ollama"]:
+            logger.info("Falling back to Ollama (local) model")
             return "ollama"
-        
-        # If no models available, try Maverick as last resort
-        if self._model_availability["maverick"]:
-            return "maverick"
         
         raise ValueError("No LLM models available")
     
-    async def _prepare_prompt(self, request: LLMRequest, user: UserResponse) -> str:
+    async def _prepare_prompt(self, request: LLMRequest, user: UserResponse, rag_context: Optional[str] = None) -> str:
         """Prepare full prompt with system message and context"""
         # Get system prompt for task
         system_prompt = self.prompt_templates.get_system_prompt(request.task)
@@ -172,8 +185,13 @@ class UnifiedLLMService:
         if request.context:
             context_str = self.prompt_templates.format_context(request.context)
         
+        # Add RAG context if provided
+        rag_context_str = ""
+        if rag_context:
+            rag_context_str = f"\n\nRelevant context from uploaded logs:\n{rag_context}"
+        
         # Combine all parts
-        full_prompt = f"{system_prompt}\n\n{conversation_context}\n{context_str}\n\nUser: {request.prompt}"
+        full_prompt = f"{system_prompt}\n\n{conversation_context}\n{context_str}{rag_context_str}\n\nUser: {request.prompt}"
         
         # Truncate if too long (keep last 4000 characters for context)
         if len(full_prompt) > 4000:
@@ -187,7 +205,7 @@ class UnifiedLLMService:
         prompt: str,
         request: LLMRequest,
         user: UserResponse,
-        db: Session
+        db: AsyncSession
     ) -> LLMResponse:
         """Generate single response (non-streaming)"""
         start_time = time.time()
@@ -200,13 +218,22 @@ class UnifiedLLMService:
                     max_tokens=request.max_tokens,
                     structured_output=request.structured_output
                 )
-            elif model_provider == "maverick":
-                response = await self.maverick_client.generate(
+            elif model_provider == "openrouter":
+                # Use OpenRouter client for Llama 4 Maverick
+                response_content = await self.openrouter_client.generate_response(
                     prompt=prompt,
+                    context=request.context,
+                    conversation_history=request.conversation_history,
+                    max_tokens=request.max_tokens or 1000,
                     temperature=request.temperature,
-                    max_tokens=request.max_tokens,
-                    structured_output=request.structured_output
+                    stream=False
                 )
+                response = {
+                    "content": response_content,
+                    "tokens_used": len(response_content.split()),  # Approximate token count
+                    "model": "llama-4-maverick",
+                    "done": True
+                }
             else:
                 raise ValueError(f"Unknown model provider: {model_provider}")
             
@@ -217,14 +244,18 @@ class UnifiedLLMService:
                 response, request.task, request.structured_output
             )
             
-            # Track usage
-            await self._track_usage(
-                user_id=str(user.id),
-                model=model_provider,
-                tokens_used=parsed_response.get("tokens_used", 0),
-                task=request.task.value,
-                db=db
-            )
+            # Track usage (non-blocking)
+            try:
+                await self._track_usage(
+                    user_id=str(user.id),
+                    model=model_provider,
+                    tokens_used=parsed_response.get("tokens_used", 0),
+                    task=request.task.value,
+                    db=db
+                )
+            except Exception as usage_error:
+                logger.warning(f"Failed to track usage (non-critical): {usage_error}")
+                # Continue without failing the response
             
             return LLMResponse(
                 content=parsed_response["content"],
@@ -250,7 +281,7 @@ class UnifiedLLMService:
         prompt: str,
         request: LLMRequest,
         user: UserResponse,
-        db: Session
+        db: AsyncSession
     ) -> AsyncGenerator[LLMResponse, None]:
         """Generate streaming response"""
         start_time = time.time()
@@ -276,47 +307,75 @@ class UnifiedLLMService:
                         metadata={"streaming": True, "task": request.task.value}
                     )
             
-            elif model_provider == "maverick":
-                async for chunk in self.maverick_client.generate_stream(
+            elif model_provider == "openrouter":
+                # Use OpenRouter streaming for Llama 4 Maverick
+                async for chunk_content in self.openrouter_client.generate_streaming_response(
                     prompt=prompt,
-                    temperature=request.temperature,
-                    max_tokens=request.max_tokens
+                    context=request.context,
+                    conversation_history=request.conversation_history,
+                    max_tokens=request.max_tokens or 1000,
+                    temperature=request.temperature
                 ):
-                    content_buffer += chunk.get("content", "")
-                    total_tokens += chunk.get("tokens", 0)
+                    content_buffer += chunk_content
+                    total_tokens += len(chunk_content.split())  # Approximate
                     
                     yield LLMResponse(
-                        content=chunk.get("content", ""),
+                        content=chunk_content,
                         model_used=model_provider,
-                        tokens_used=chunk.get("tokens", 0),
+                        tokens_used=len(chunk_content.split()),
                         latency_ms=(time.time() - start_time) * 1000,
                         confidence_score=0.8,
                         metadata={"streaming": True, "task": request.task.value}
                     )
             
-            # Track final usage
-            await self._track_usage(
-                user_id=str(user.id),
-                model=model_provider,
-                tokens_used=total_tokens,
-                task=request.task.value,
-                db=db
-            )
+            # Track final usage (non-blocking)
+            try:
+                await self._track_usage(
+                    user_id=str(user.id),
+                    model=model_provider,
+                    tokens_used=total_tokens,
+                    task=request.task.value,
+                    db=db
+                )
+            except Exception as usage_error:
+                logger.warning(f"Failed to track usage (non-critical): {usage_error}")
+                # Continue without failing the response
             
         except Exception as e:
             logger.error(f"Error generating streaming response with {model_provider}: {e}")
             yield self._create_error_response(str(e))
     
-    async def _check_rate_limits(self, user: UserResponse, task: LLMTask, db: Session) -> bool:
+    async def _check_rate_limits(self, user: UserResponse, task: LLMTask, db: AsyncSession) -> bool:
         """Check rate limits based on user tier"""
-        # Get user's current usage
-        from datetime import datetime, timedelta
-        
-        today = datetime.utcnow().date()
-        usage = db.query(UsageTracking).filter(
-            UsageTracking.user_id == user.id,
-            UsageTracking.date == today
-        ).first()
+        try:
+            # Get user's current usage
+            from datetime import datetime, timedelta
+            from sqlalchemy import select
+            
+            # Check if the session is in a failed state
+            if db.in_transaction() and db.is_active is False:
+                logger.warning("Database session is in failed state, rolling back before rate limit check")
+                await db.rollback()
+            
+            today = datetime.utcnow().date()
+            
+            # Use async query
+            result = await db.execute(
+                select(UsageTracking).where(
+                    UsageTracking.user_id == user.id,
+                    UsageTracking.date == today
+                )
+            )
+            usage = result.scalar_one_or_none()
+        except Exception as e:
+            logger.error(f"Error checking rate limits: {e}")
+            try:
+                await db.rollback()
+                logger.debug("Rolled back rate limit check transaction")
+            except Exception as rollback_error:
+                logger.error(f"Error during rollback in rate limit check: {rollback_error}")
+            # If we can't check rate limits, allow the request to proceed
+            return True
         
         if not usage:
             return True  # No usage today, allow request
@@ -347,17 +406,28 @@ class UnifiedLLMService:
         model: str,
         tokens_used: int,
         task: str,
-        db: Session
+        db: AsyncSession
     ):
         """Track LLM usage for billing and limits"""
         try:
             from datetime import datetime
+            from sqlalchemy import select
+            
+            # Check if the session is in a failed state
+            if db.in_transaction() and db.is_active is False:
+                logger.warning("Database session is in failed state, rolling back before usage tracking")
+                await db.rollback()
             
             today = datetime.utcnow().date()
-            usage = db.query(UsageTracking).filter(
-                UsageTracking.user_id == user_id,
-                UsageTracking.date == today
-            ).first()
+            
+            # Use async query
+            result = await db.execute(
+                select(UsageTracking).where(
+                    UsageTracking.user_id == user_id,
+                    UsageTracking.date == today
+                )
+            )
+            usage = result.scalar_one_or_none()
             
             if usage:
                 usage.llm_tokens_used += tokens_used
@@ -373,12 +443,18 @@ class UnifiedLLMService:
                 )
                 db.add(usage)
             
-            db.commit()
+            await db.commit()
             logger.debug(f"Tracked usage: {tokens_used} tokens for user {user_id}")
             
         except Exception as e:
             logger.error(f"Error tracking usage: {e}")
-            db.rollback()
+            try:
+                await db.rollback()
+                logger.debug("Rolled back usage tracking transaction")
+            except Exception as rollback_error:
+                logger.error(f"Error during rollback in usage tracking: {rollback_error}")
+                # If rollback fails, we need to create a new session
+                # This is a fallback - the calling code should handle session recreation
     
     def _create_error_response(self, error_message: str) -> LLMResponse:
         """Create error response"""

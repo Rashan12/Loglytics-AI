@@ -1,409 +1,494 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Query
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import List, Optional, Dict, Any
-from datetime import datetime, timedelta
-
-from app.database import get_db
+from sqlalchemy import select, func, desc
+from app.database.session import get_db
 from app.models.user import User
+from app.models.project import Project
+from app.models.log_file import LogFile
 from app.models.analysis import Analysis
 from app.models.log_entry import LogEntry
-from app.schemas.analysis import Analysis as AnalysisSchema, AnalysisCreate
-from app.services.auth.dependencies import get_current_user
-from app.services.analytics.analytics_service import AnalyticsService
-from app.services.analytics.analytics_engine import AnalyticsEngine
+from app.services.auth.jwt_handler import get_current_user
+from collections import defaultdict
+from datetime import datetime, timedelta, timezone
+import logging
+import json
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
-
-@router.post("/", response_model=AnalysisSchema)
-async def create_analysis(
-    analysis: AnalysisCreate,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+@router.get("/dashboard")
+async def get_dashboard_analytics(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
 ):
-    """Create a new analysis"""
-    analytics_service = AnalyticsService(db)
-    return await analytics_service.create_analysis(analysis, current_user.id)
+    """Get dashboard analytics for the current user"""
+    try:
+        # Get project count
+        project_result = await db.execute(
+            select(func.count(Project.id)).where(Project.user_id == current_user.id)
+        )
+        project_count = project_result.scalar() or 0
+        
+        # Get log file count
+        log_file_result = await db.execute(
+            select(func.count(LogFile.id)).where(LogFile.user_id == current_user.id)
+        )
+        log_file_count = log_file_result.scalar() or 0
+        
+        # Get analysis count and recent analyses
+        analysis_result = await db.execute(
+            select(func.count(Analysis.id)).where(Analysis.user_id == current_user.id)
+        )
+        analysis_count = analysis_result.scalar() or 0
+        
+        # Get recent analyses
+        recent_analyses_result = await db.execute(
+            select(Analysis)
+            .where(Analysis.user_id == current_user.id)
+            .order_by(desc(Analysis.created_at))
+            .limit(5)
+        )
+        recent_analyses = recent_analyses_result.scalars().all()
+        
+        # Process recent analyses
+        analyses_data = []
+        for analysis in recent_analyses:
+            try:
+                results = json.loads(analysis.results) if analysis.results else {}
+            except:
+                results = {}
+            
+            analyses_data.append({
+                "id": analysis.id,
+                "name": analysis.name,
+                "description": analysis.description,
+                "analysis_type": analysis.analysis_type,
+                "status": analysis.status,
+                "created_at": analysis.created_at.isoformat() if analysis.created_at else None,
+                "results": results
+            })
+        
+        # Calculate error rate from analyses (if available)
+        error_rate = 0.0
+        if analyses_data:
+            total_errors = 0
+            total_entries = 0
+            for analysis in analyses_data:
+                if analysis["results"] and "level_distribution" in analysis["results"]:
+                    level_dist = analysis["results"]["level_distribution"]
+                    total_errors += level_dist.get("ERROR", 0) + level_dist.get("FATAL", 0)
+                    total_entries += sum(level_dist.values())
+            
+            if total_entries > 0:
+                error_rate = (total_errors / total_entries) * 100
+        
+        logger.info(f"📊 Dashboard analytics for user {current_user.id}: {project_count} projects, {log_file_count} log files, {analysis_count} analyses")
+        
+        return {
+            "total_logs": log_file_count,
+            "error_rate": round(error_rate, 2),
+            "active_projects": project_count,
+            "ai_insights": analysis_count,
+            "recent_analyses": analyses_data,
+            "total_analyses": analysis_count
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Dashboard analytics error: {e}", exc_info=True)
+        raise HTTPException(500, f"Failed to get dashboard analytics: {str(e)}")
 
-
-@router.get("/", response_model=List[AnalysisSchema])
-async def get_analyses(
+@router.get("/analyses")
+async def get_all_analyses(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
     skip: int = 0,
-    limit: int = 100,
-    analysis_type: Optional[str] = None,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    limit: int = 50
 ):
-    """Get user's analyses"""
-    query = db.query(Analysis).filter(Analysis.user_id == current_user.id)
-    
-    if analysis_type:
-        query = query.filter(Analysis.analysis_type == analysis_type)
-    
-    analyses = query.offset(skip).limit(limit).all()
-    return analyses
+    """Get all analyses for the Analytics page"""
+    try:
+        # Get analyses with pagination
+        analyses_result = await db.execute(
+            select(Analysis)
+            .where(Analysis.user_id == current_user.id)
+            .order_by(desc(Analysis.created_at))
+            .offset(skip)
+            .limit(limit)
+        )
+        analyses = analyses_result.scalars().all()
+        
+        # Process analyses data
+        analyses_data = []
+        for analysis in analyses:
+            try:
+                results = json.loads(analysis.results) if analysis.results else {}
+            except:
+                results = {}
+            
+            analyses_data.append({
+                "id": analysis.id,
+                "name": analysis.name,
+                "description": analysis.description,
+                "analysis_type": analysis.analysis_type,
+                "status": analysis.status,
+                "created_at": analysis.created_at.isoformat() if analysis.created_at else None,
+                "completed_at": analysis.completed_at.isoformat() if analysis.completed_at else None,
+                "execution_time": analysis.execution_time,
+                "results": results,
+                "log_file_id": analysis.log_file_id
+            })
+        
+        # Get total count
+        count_result = await db.execute(
+            select(func.count(Analysis.id)).where(Analysis.user_id == current_user.id)
+        )
+        total_count = count_result.scalar() or 0
+        
+        logger.info(f"📊 Retrieved {len(analyses_data)} analyses for user {current_user.id}")
+        
+        return {
+            "analyses": analyses_data,
+            "total_count": total_count,
+            "skip": skip,
+            "limit": limit
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Get analyses error: {e}", exc_info=True)
+        raise HTTPException(500, f"Failed to get analyses: {str(e)}")
 
-
-@router.get("/{analysis_id}", response_model=AnalysisSchema)
-async def get_analysis(
+@router.get("/analyses/{analysis_id}")
+async def get_analysis_details(
     analysis_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    """Get specific analysis"""
-    analysis = db.query(Analysis).filter(
-        Analysis.id == analysis_id,
-        Analysis.user_id == current_user.id
-    ).first()
-    
-    if not analysis:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Analysis not found"
-        )
-    
-    return analysis
-
-
-@router.post("/patterns")
-async def analyze_patterns(
-    log_file_id: int,
-    pattern_type: str = "error",
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    """Analyze log patterns"""
-    analytics_service = AnalyticsService(db)
-    return await analytics_service.analyze_patterns(log_file_id, pattern_type, current_user.id)
-
-
-@router.post("/anomalies")
-async def detect_anomalies(
-    log_file_id: int,
-    threshold: float = 0.8,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    """Detect anomalies in logs"""
-    analytics_service = AnalyticsService(db)
-    return await analytics_service.detect_anomalies(log_file_id, threshold, current_user.id)
-
-
-@router.get("/stats/overview")
-async def get_overview_stats(
-    log_file_id: Optional[int] = None,
-    days: int = 7,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    """Get overview statistics"""
-    analytics_service = AnalyticsService(db)
-    return await analytics_service.get_overview_stats(log_file_id, days, current_user.id)
-
-
-# New Analytics Engine Endpoints
-
-@router.get("/anomalies/{project_id}")
-async def get_anomaly_detection(
-    project_id: str,
-    log_file_id: Optional[str] = Query(None),
-    threshold: float = Query(2.0, ge=1.0, le=5.0),
-    force_refresh: bool = Query(False),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Get anomaly detection results for a project"""
+    """Get detailed analysis results"""
     try:
-        engine = AnalyticsEngine(db)
-        result = await engine.get_or_compute_analytics(
-            project_id=project_id,
-            analytics_type="anomalies",
-            log_file_id=log_file_id,
-            force_refresh=force_refresh
+        # Get specific analysis
+        analysis_result = await db.execute(
+            select(Analysis).where(
+                Analysis.id == analysis_id,
+                Analysis.user_id == current_user.id
+            )
         )
-        return result
+        analysis = analysis_result.scalar_one_or_none()
+        
+        if not analysis:
+            raise HTTPException(404, "Analysis not found")
+        
+        try:
+            results = json.loads(analysis.results) if analysis.results else {}
+        except:
+            results = {}
+        
+        logger.info(f"📊 Retrieved analysis {analysis_id} for user {current_user.id}")
+        
+        return {
+            "id": analysis.id,
+            "name": analysis.name,
+            "description": analysis.description,
+            "analysis_type": analysis.analysis_type,
+            "status": analysis.status,
+            "created_at": analysis.created_at.isoformat() if analysis.created_at else None,
+            "completed_at": analysis.completed_at.isoformat() if analysis.completed_at else None,
+            "execution_time": analysis.execution_time,
+            "results": results,
+            "log_file_id": analysis.log_file_id,
+            "error_message": analysis.error_message
+        }
+        
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"❌ Get analysis details error: {e}", exc_info=True)
+        raise HTTPException(500, f"Failed to get analysis details: {str(e)}")
 
-
-@router.get("/performance/{project_id}")
-async def get_performance_metrics(
-    project_id: str,
-    log_file_id: Optional[str] = Query(None),
-    force_refresh: bool = Query(False),
+@router.get("/log-files")
+async def get_user_log_files(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Get performance metrics for a project"""
+    """Get all log files for the current user with their upload dates"""
     try:
-        engine = AnalyticsEngine(db)
-        result = await engine.get_or_compute_analytics(
-            project_id=project_id,
-            analytics_type="performance",
-            log_file_id=log_file_id,
-            force_refresh=force_refresh
+        # Get all log files for this user, ordered by most recent first
+        log_files_result = await db.execute(
+            select(LogFile)
+            .where(LogFile.user_id == current_user.id)
+            .order_by(desc(LogFile.created_at))
         )
-        return result
+        log_files = log_files_result.scalars().all()
+        
+        # Process log files data and deduplicate by filename
+        log_files_data = []
+        seen_filenames = {}  # Track filenames we've seen
+        
+        for log_file in log_files:
+            # Extract actual filename without UUID prefix
+            actual_filename = log_file.filename
+            if '_' in actual_filename:
+                # Remove the UUID prefix (everything before the last underscore)
+                parts = actual_filename.rsplit('_', 1)
+                if len(parts) == 2 and len(parts[0]) > 10:
+                    # Likely has UUID prefix, use the second part
+                    actual_filename = parts[1]
+                else:
+                    # Just use the original
+                    actual_filename = log_file.filename
+            
+            # Check for duplicates by actual filename
+            if actual_filename in seen_filenames:
+                # This is a duplicate, update the entry count but keep the most recent file
+                existing_file = seen_filenames[actual_filename]
+                try:
+                    entry_count_result = await db.execute(
+                        select(func.count(LogEntry.id)).where(LogEntry.log_file_id == log_file.id)
+                    )
+                    entry_count = entry_count_result.scalar() or 0
+                    
+                    # Add to existing file's entry count
+                    for i, f in enumerate(log_files_data):
+                        if f['id'] == str(existing_file.id):
+                            f['entry_count'] += entry_count
+                            f['duplicate_count'] = f.get('duplicate_count', 1) + 1
+                            break
+                except Exception as e:
+                    logger.warning(f"Could not count entries for duplicate file: {e}")
+                continue
+            
+            # This is a new unique file
+            try:
+                entry_count_result = await db.execute(
+                    select(func.count(LogEntry.id)).where(LogEntry.log_file_id == log_file.id)
+                )
+                entry_count = entry_count_result.scalar() or 0
+            except Exception as e:
+                logger.warning(f"Could not count entries: {e}")
+                entry_count = 0
+            
+            # Get analysis for this log file
+            analysis_count_result = await db.execute(
+                select(func.count(Analysis.id)).where(
+                    Analysis.log_file_id == log_file.id,
+                    Analysis.user_id == current_user.id
+                )
+            )
+            analysis_count = analysis_count_result.scalar() or 0
+            
+            log_files_data.append({
+                "id": str(log_file.id),
+                "filename": actual_filename,  # Use cleaned filename
+                "original_filename": log_file.filename,  # Keep original for reference
+                "file_size": log_file.file_size,
+                "file_type": log_file.file_type,
+                "upload_status": log_file.upload_status,
+                "created_at": log_file.created_at.isoformat() if log_file.created_at else None,
+                "updated_at": log_file.updated_at.isoformat() if log_file.updated_at else None,
+                "entry_count": entry_count,
+                "analysis_count": analysis_count,
+                "project_id": log_file.project_id,
+            })
+            
+            seen_filenames[actual_filename] = log_file
+        
+        logger.info(f"📊 Retrieved {len(log_files_data)} log files for user {current_user.id}")
+        
+        return {
+            "log_files": log_files_data,
+            "total_count": len(log_files_data)
+        }
+        
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"❌ Get log files error: {e}", exc_info=True)
+        raise HTTPException(500, f"Failed to get log files: {str(e)}")
 
-
-@router.get("/patterns/{project_id}")
-async def get_pattern_analysis(
-    project_id: str,
-    log_file_id: Optional[str] = Query(None),
-    force_refresh: bool = Query(False),
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    """Get NLP-based pattern analysis for a project"""
-    try:
-        engine = AnalyticsEngine(db)
-        result = await engine.get_or_compute_analytics(
-            project_id=project_id,
-            analytics_type="patterns",
-            log_file_id=log_file_id,
-            force_refresh=force_refresh
-        )
-        return result
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/insights/{project_id}")
-async def get_ai_insights(
-    project_id: str,
-    log_file_id: Optional[str] = Query(None),
-    force_refresh: bool = Query(False),
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    """Get AI-generated insights and recommendations for a project"""
-    try:
-        engine = AnalyticsEngine(db)
-        result = await engine.get_or_compute_analytics(
-            project_id=project_id,
-            analytics_type="insights",
-            log_file_id=log_file_id,
-            force_refresh=force_refresh
-        )
-        return result
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/generate/{log_file_id}")
-async def trigger_analytics_generation(
+@router.get("/by-log-file/{log_file_id}")
+async def get_analytics_by_log_file(
     log_file_id: str,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Trigger background analytics generation for a log file"""
+    """Get analytics for a specific log file"""
     try:
-        # TODO: Integrate with Celery for background task processing
-        # For now, return a placeholder response
+        # Verify log file exists and belongs to user
+        log_file_result = await db.execute(
+            select(LogFile).where(
+                LogFile.id == log_file_id,
+                LogFile.user_id == current_user.id
+            )
+        )
+        log_file = log_file_result.scalar_one_or_none()
+        
+        if not log_file:
+            raise HTTPException(404, "Log file not found")
+        
+        # Get analysis for this log file
+        analysis_result = await db.execute(
+            select(Analysis)
+            .where(
+                Analysis.log_file_id == log_file.id,
+                Analysis.user_id == current_user.id
+            )
+            .order_by(desc(Analysis.created_at))
+            .limit(1)
+        )
+        analysis = analysis_result.scalar_one_or_none()
+        
+        # Get log entries for this log file
+        try:
+            entries_result = await db.execute(
+                select(LogEntry)
+                .where(LogEntry.log_file_id == log_file.id)
+                .order_by(LogEntry.timestamp.desc())
+            )
+            entries = entries_result.scalars().all()
+            
+            # Calculate analytics from entries
+            total_logs = len(entries)
+            error_count = sum(1 for e in entries if e.log_level in ['ERROR', 'FATAL'])
+            warn_count = sum(1 for e in entries if e.log_level in ['WARN'])
+            info_count = sum(1 for e in entries if e.log_level in ['INFO'])
+            
+            error_rate = (error_count / total_logs * 100) if total_logs > 0 else 0
+            
+            # Get log level distribution
+            level_distribution = {}
+            for e in entries:
+                level = e.log_level
+                level_distribution[level] = level_distribution.get(level, 0) + 1
+            
+            log_levels = [
+                {"name": level, "count": count}
+                for level, count in level_distribution.items()
+            ]
+            
+            # Generate timeline data (last 24 hours)
+            timeline_data = []
+            if entries:
+                # Get current time (timezone-aware)
+                current_time = datetime.now(timezone.utc)
+                start_time = current_time - timedelta(hours=24)
+                
+                # Create time buckets
+                time_buckets = defaultdict(int)
+                for entry in entries:
+                    if entry.timestamp:
+                        entry_time = entry.timestamp
+                        if isinstance(entry_time, str):
+                            entry_time = datetime.fromisoformat(entry_time)
+                        
+                        # Make entry_time timezone-aware if it's naive
+                        if entry_time.tzinfo is None:
+                            # Assume UTC if timezone-naive
+                            entry_time = entry_time.replace(tzinfo=timezone.utc)
+                        
+                        # Only include entries from last 24h
+                        if entry_time >= start_time:
+                            # Round to hour
+                            bucket = entry_time.replace(minute=0, second=0, microsecond=0)
+                            time_buckets[bucket] += 1
+                
+                # Sort and format
+                for time, count in sorted(time_buckets.items()):
+                    timeline_data.append({
+                        "time": time.strftime("%H:%M"),
+                        "count": count
+                    })
+            
+        except Exception as e:
+            logger.warning(f"Could not get log entries: {e}")
+            total_logs = 0
+            error_rate = 0
+            log_levels = []
+            timeline_data = []
+        
+        # Parse analysis results if available
+        analysis_results = {}
+        if analysis:
+            try:
+                analysis_results = json.loads(analysis.results) if analysis.results else {}
+            except:
+                pass
+        
+        logger.info(f"📊 Analytics for log file {log_file_id}: {total_logs} entries")
+        
+        # Generate error frequency data (by day)
+        error_frequency = []
+        if entries:
+            error_entries = [e for e in entries if e.log_level in ['ERROR', 'FATAL']]
+            error_by_day = defaultdict(int)
+            for error in error_entries:
+                if error.timestamp:
+                    timestamp = error.timestamp
+                    if isinstance(timestamp, str):
+                        timestamp = datetime.fromisoformat(timestamp)
+                    day = timestamp.strftime('%a')
+                    error_by_day[day] += 1
+            
+            # Default order
+            days_order = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+            for day in days_order:
+                if day in error_by_day:
+                    error_frequency.append({"period": day, "errors": error_by_day[day]})
+        
+        # Generate top errors
+        top_errors = []
+        if entries and total_logs > 0:
+            error_entries = [e for e in entries if e.log_level in ['ERROR', 'FATAL']]
+            
+            if error_entries:
+                # Count error occurrences by message
+                error_messages = defaultdict(int)
+                last_seen_times = {}
+                
+                for e in error_entries:
+                    if e.content:
+                        msg = e.content[:100]  # First 100 chars
+                        error_messages[msg] += 1
+                        # Track last seen timestamp
+                        if e.timestamp:
+                            timestamp = e.timestamp
+                            if isinstance(timestamp, str):
+                                timestamp = datetime.fromisoformat(timestamp)
+                            # Update last seen if newer
+                            if msg not in last_seen_times or timestamp > last_seen_times[msg]:
+                                last_seen_times[msg] = timestamp
+                
+                # Sort by frequency and take top 5
+                sorted_errors = sorted(error_messages.items(), key=lambda x: x[1], reverse=True)[:5]
+                
+                top_errors = [
+                    {
+                        "severity": "high",
+                        "count": count,
+                        "message": msg,
+                        "lastSeen": last_seen_times.get(msg)
+                    }
+                    for msg, count in sorted_errors
+                ]
+                
+                logger.info(f"📊 Generated {len(top_errors)} top errors from {len(error_entries)} error entries")
+        
         return {
-            "message": "Analytics generation triggered",
-            "status": "processing",
-            "log_file_id": log_file_id,
-            "user_id": current_user.id
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# New Dashboard Analytics Endpoints
-
-@router.get("/overview/{project_id}")
-async def get_analytics_overview(
-    project_id: str,
-    start_date: Optional[str] = Query(None),
-    end_date: Optional[str] = Query(None),
-    log_levels: Optional[str] = Query(None),  # Comma-separated log levels
-    force_refresh: bool = Query(False),
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    """Get comprehensive analytics overview for dashboard"""
-    try:
-        from app.services.analytics.metrics_calculator import MetricsCalculator
-        
-        calculator = MetricsCalculator(db)
-        
-        # Parse date range
-        start_dt = None
-        end_dt = None
-        if start_date:
-            start_dt = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
-        if end_date:
-            end_dt = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
-        
-        # Parse log levels filter
-        log_level_filter = None
-        if log_levels:
-            log_level_filter = [level.strip().upper() for level in log_levels.split(',')]
-        
-        # Get overview data
-        overview_data = await calculator.calculate_overview(project_id)
-        
-        # Get error analysis
-        error_data = await calculator.calculate_error_analysis(project_id)
-        
-        # Get anomaly data
-        from app.services.analytics.anomaly_detector import AnomalyDetector
-        anomaly_detector = AnomalyDetector(db)
-        anomaly_data = await anomaly_detector.detect_anomalies(project_id)
-        
-        return {
-            "overview": overview_data,
-            "errors": error_data,
-            "anomalies": anomaly_data,
-            "generated_at": datetime.utcnow().isoformat()
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/timeline/{project_id}")
-async def get_log_timeline(
-    project_id: str,
-    start_date: Optional[str] = Query(None),
-    end_date: Optional[str] = Query(None),
-    granularity: str = Query("hour", regex="^(hour|day)$"),
-    log_levels: Optional[str] = Query(None),
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    """Get log timeline data for charts"""
-    try:
-        from app.services.analytics.metrics_calculator import MetricsCalculator
-        
-        calculator = MetricsCalculator(db)
-        timeline_data = await calculator._get_timeline_data(project_id)
-        
-        return {
-            "timeline": timeline_data,
-            "granularity": granularity,
-            "generated_at": datetime.utcnow().isoformat()
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/errors/{project_id}")
-async def get_error_analysis(
-    project_id: str,
-    start_date: Optional[str] = Query(None),
-    end_date: Optional[str] = Query(None),
-    limit: int = Query(10, ge=1, le=50),
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    """Get error analysis data"""
-    try:
-        from app.services.analytics.metrics_calculator import MetricsCalculator
-        
-        calculator = MetricsCalculator(db)
-        error_data = await calculator.calculate_error_analysis(project_id)
-        
-        return {
-            "errors": error_data,
-            "generated_at": datetime.utcnow().isoformat()
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/performance/{project_id}")
-async def get_performance_analysis(
-    project_id: str,
-    start_date: Optional[str] = Query(None),
-    end_date: Optional[str] = Query(None),
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    """Get performance metrics and analysis"""
-    try:
-        from app.services.analytics.performance_analyzer import PerformanceAnalyzer
-        
-        analyzer = PerformanceAnalyzer(db)
-        performance_data = await analyzer.analyze_performance(project_id)
-        
-        return {
-            "performance": performance_data,
-            "generated_at": datetime.utcnow().isoformat()
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/insights/{project_id}")
-async def get_ai_insights_enhanced(
-    project_id: str,
-    start_date: Optional[str] = Query(None),
-    end_date: Optional[str] = Query(None),
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    """Get enhanced AI insights and recommendations"""
-    try:
-        # This would integrate with the LLM service to generate insights
-        # For now, return mock data
-        mock_insights = [
-            {
-                "id": "1",
-                "type": "insight",
-                "title": "Error Rate Spike Detected",
-                "description": "Errors increased by 35% in the last 24 hours, primarily between 2-4 AM. This pattern suggests a possible cron job or scheduled task issue.",
-                "severity": "high",
-                "confidence": 0.87,
-                "actionable": True,
-                "category": "Error Analysis",
-                "timestamp": datetime.utcnow().isoformat(),
-                "related_metrics": ["Error Rate", "Timeline Analysis"]
+            "log_file": {
+                "id": str(log_file.id),
+                "filename": log_file.filename,
+                "file_size": log_file.file_size,
+                "file_type": log_file.file_type,
+                "upload_status": log_file.upload_status,
+                "created_at": log_file.created_at.isoformat() if log_file.created_at else None,
             },
-            {
-                "id": "2",
-                "type": "recommendation",
-                "title": "Database Connection Pool Optimization",
-                "description": "Consider increasing the database connection pool size. Current timeout errors suggest insufficient connections during peak hours.",
-                "severity": "medium",
-                "confidence": 0.72,
-                "actionable": True,
-                "category": "Performance",
-                "timestamp": datetime.utcnow().isoformat(),
-                "related_metrics": ["Response Time", "Database Errors"]
-            }
-        ]
+            "total_logs": total_logs,
+            "error_rate": round(error_rate, 2),
+            "log_levels": log_levels,
+            "timeline": timeline_data,
+            "error_frequency": error_frequency,
+            "top_errors": top_errors,
+            "analysis": analysis_results if analysis else {},
+            "analysis_id": analysis.id if analysis else None,
+        }
         
-        return {
-            "insights": mock_insights,
-            "generated_at": datetime.utcnow().isoformat()
-        }
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/export/{project_id}")
-async def export_analytics_data(
-    project_id: str,
-    format: str = Query(..., regex="^(pdf|csv|json|png)$"),
-    start_date: Optional[str] = Query(None),
-    end_date: Optional[str] = Query(None),
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    """Export analytics data in various formats"""
-    try:
-        # This would generate the actual export files
-        # For now, return a placeholder response
-        return {
-            "message": f"Export in {format} format initiated",
-            "project_id": project_id,
-            "format": format,
-            "download_url": f"/api/v1/analytics/download/{project_id}/{format}",
-            "expires_at": (datetime.utcnow() + timedelta(hours=1)).isoformat()
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"❌ Get analytics by log file error: {e}", exc_info=True)
+        raise HTTPException(500, f"Failed to get analytics: {str(e)}")

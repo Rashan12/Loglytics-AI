@@ -417,6 +417,10 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         """Process request through authentication middleware"""
         try:
+            # Skip authentication for OPTIONS requests (CORS preflight)
+            if request.method == "OPTIONS":
+                return await call_next(request)
+            
             # Skip authentication for certain paths
             if not self._requires_authentication(request.url.path):
                 return await call_next(request)

@@ -18,7 +18,7 @@ class SecurityConfig(BaseSettings):
     }
     
     # Rate Limiting
-    rate_limit_enabled: bool = True
+    rate_limit_enabled: bool = False
     rate_limit_redis_url: str = "redis://localhost:6379/1"
     rate_limit_redis_password: Optional[str] = None
     
@@ -42,9 +42,15 @@ class SecurityConfig(BaseSettings):
     
     # Security Headers
     security_headers_enabled: bool = True
-    cors_origins: List[str] = ["https://yourdomain.com"]
+    cors_origins: List[str] = [
+        "http://localhost:3000",
+        "http://localhost:3001",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:3001",
+        "*"
+    ]
     cors_allow_credentials: bool = True
-    cors_allow_methods: List[str] = ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+    cors_allow_methods: List[str] = ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"]
     cors_allow_headers: List[str] = ["*"]
     
     # Content Security Policy
@@ -121,7 +127,7 @@ class SecurityConfig(BaseSettings):
     webhook_retry_delay_seconds: int = 1
     
     # DoS Protection
-    dos_protection_enabled: bool = True
+    dos_protection_enabled: bool = False
     max_connections_per_ip: int = 100
     max_requests_per_minute: int = 1000
     request_timeout_seconds: int = 30

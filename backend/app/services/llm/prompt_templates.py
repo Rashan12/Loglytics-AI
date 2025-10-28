@@ -76,3 +76,23 @@ class PromptTemplates:
         prompt += f"User Input: {user_input}"
         
         return prompt
+    
+    def format_conversation_history(self, conversation_history: List[Dict[str, Any]]) -> str:
+        """Format conversation history for prompt"""
+        if not conversation_history:
+            return ""
+        
+        formatted_history = "Previous conversation:\n"
+        for msg in conversation_history:
+            role = msg.get('role', 'user')
+            content = msg.get('content', '')
+            formatted_history += f"{role.capitalize()}: {content}\n"
+        
+        return formatted_history + "\n"
+    
+    def format_context(self, context: str) -> str:
+        """Format additional context for prompt"""
+        if not context:
+            return ""
+        
+        return f"Additional context:\n{context}\n\n"

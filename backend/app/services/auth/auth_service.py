@@ -16,7 +16,7 @@ from app.models.user import User, SubscriptionTier, LLMModel
 from app.models.api_key import APIKey
 from app.schemas.user import UserCreate, UserUpdate, UserResponse
 from app.services.auth.password_handler import PasswordHandler
-from app.services.auth.jwt_handler import JWTHandler
+from app.services.auth.jwt_handler import create_access_token
 # REMOVED: from app.core.security import create_access_token (not needed)
 
 logger = logging.getLogger(__name__)
@@ -27,7 +27,6 @@ class AuthService:
     def __init__(self, db: AsyncSession):  # CHANGED: AsyncSession
         self.db = db
         self.password_handler = PasswordHandler()
-        self.jwt_handler = JWTHandler()
     
     async def register_user(self, user_data: UserCreate) -> Tuple[bool, Optional[UserResponse], str]:
         """
@@ -82,7 +81,7 @@ class AuthService:
 
             # Add to database
             self.db.add(db_user)
-            await self.db.commit()  # CHANGED: await
+            await self.db.flush()  # CHANGED: flush instead of commit
             await self.db.refresh(db_user)  # CHANGED: await
             
             logger.info(f"User registered successfully: {email}")
@@ -172,10 +171,8 @@ class AuthService:
         Returns:
             Dictionary containing tokens
         """
-        return self.jwt_handler.create_token_pair(
-            user_id=str(user.id),
-            email=user.email,
-            subscription_tier=user.subscription_tier.value if hasattr(user.subscription_tier, 'value') else str(user.subscription_tier)
+        return create_access_token(
+            {"sub": str(user.id), "email": user.email}
         )
     
     def refresh_tokens(self, refresh_token: str) -> Tuple[bool, Optional[Dict[str, str]], str]:  # REMOVED async
@@ -189,11 +186,8 @@ class AuthService:
             Tuple of (success, tokens, error_message)
         """
         try:
-            tokens = self.jwt_handler.refresh_access_token(refresh_token)
-            if tokens:
-                return True, tokens, "Tokens refreshed successfully"
-            else:
-                return False, None, "Invalid or expired refresh token"
+            # TODO: Implement refresh token functionality
+            return False, None, "Refresh token functionality not implemented"
         except Exception as e:
             logger.error(f"Error refreshing tokens: {e}", exc_info=True)
             return False, None, "Token refresh failed"
@@ -209,23 +203,31 @@ class AuthService:
             Tuple of (success, user_data, error_message)
         """
         try:
-            payload = self.jwt_handler.verify_token(token, "access")
-            if not payload:
-                return False, None, "Invalid or expired token"
+            from app.services.auth.jwt_handler import verify_token
             
+            # Verify the JWT token
+            payload = verify_token(token)
+            if not payload:
+                return False, None, "Invalid token"
+            
+            # Get user ID from token payload
             user_id = payload.get("sub")
             if not user_id:
                 return False, None, "Invalid token payload"
             
-            # Get user from database - CHANGED to async
+            # Get user from database
             result = await self.db.execute(
-                select(User).filter(User.id == user_id)
+                select(User).where(User.id == user_id)
             )
             user = result.scalar_one_or_none()
             
-            if not user or not user.is_active:
-                return False, None, "User not found or inactive"
+            if not user:
+                return False, None, "User not found"
             
+            if not user.is_active:
+                return False, None, "User account is disabled"
+            
+            # Return user data
             user_response = UserResponse(
                 id=user.id,
                 email=user.email,
@@ -234,10 +236,10 @@ class AuthService:
                 selected_llm_model=user.selected_llm_model,
                 is_active=user.is_active,
                 created_at=user.created_at,
-                updated_at=user.updated_at or user.created_at  # Fallback to created_at if None
+                updated_at=user.updated_at or user.created_at
             )
             
-            return True, user_response, "User retrieved successfully"
+            return True, user_response, ""
             
         except Exception as e:
             logger.error(f"Error getting current user: {e}", exc_info=True)
@@ -289,7 +291,7 @@ class AuthService:
                     setattr(user, field, value)
             
             user.updated_at = datetime.utcnow()
-            await self.db.commit()  # CHANGED: await
+            await self.db.flush()  # CHANGED: flush instead of commit
             await self.db.refresh(user)  # CHANGED: await
             
             logger.info(f"User updated successfully: {user.email}")
@@ -334,15 +336,8 @@ class AuthService:
                 return True, "If the email exists, a reset link has been sent"
             
             # Create password reset token
-            reset_token = self.jwt_handler.create_password_reset_token(
-                str(user.id), user.email
-            )
-            
-            # In production, you would send this token via email
-            # For now, we'll just log it
-            logger.info(f"Password reset token for {email}: {reset_token}")
-            
-            return True, "If the email exists, a reset link has been sent"
+            # TODO: Implement password reset token creation
+            return False, "Password reset functionality not implemented"
             
         except Exception as e:
             logger.error(f"Error requesting password reset: {e}", exc_info=True)
@@ -361,9 +356,8 @@ class AuthService:
         """
         try:
             # Verify reset token
-            payload = self.jwt_handler.verify_password_reset_token(token)
-            if not payload:
-                return False, "Invalid or expired reset token"
+            # TODO: Implement password reset token verification
+            return False, "Password reset functionality not implemented"
             
             user_id = payload.get("sub")
             if not user_id:
@@ -390,7 +384,7 @@ class AuthService:
             # Update password
             user.password_hash = self.password_handler.hash_password(new_password)
             user.updated_at = datetime.utcnow()
-            await self.db.commit()  # CHANGED: await
+            await self.db.flush()  # CHANGED: flush instead of commit
             
             logger.info(f"Password reset successfully for user: {user.email}")
             return True, "Password reset successfully"
@@ -425,7 +419,7 @@ class AuthService:
             )
             
             self.db.add(db_api_key)
-            await self.db.commit()  # CHANGED: await
+            await self.db.flush()  # CHANGED: flush instead of commit
             await self.db.refresh(db_api_key)  # CHANGED: await
             
             logger.info(f"API key created for user: {user_id}")
@@ -493,7 +487,7 @@ class AuthService:
                 return False, "API key not found"
             
             await self.db.delete(api_key)  # CHANGED: await
-            await self.db.commit()  # CHANGED: await
+            await self.db.flush()  # CHANGED: flush instead of commit
             
             logger.info(f"API key deleted: {key_id}")
             return True, "API key deleted successfully"
@@ -536,7 +530,7 @@ class AuthService:
             
             # Update last used
             db_api_key.last_used_at = datetime.utcnow()
-            await self.db.commit()  # CHANGED: await
+            await self.db.flush()  # CHANGED: flush instead of commit
             
             # Get user - CHANGED to async
             result = await self.db.execute(

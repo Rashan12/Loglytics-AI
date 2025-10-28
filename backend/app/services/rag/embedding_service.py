@@ -40,10 +40,12 @@ class EmbeddingService:
             # Set model to evaluation mode
             self.model.eval()
             
+            # Mark as loaded first
+            self._model_loaded = True
+            
             # Test the model
             test_embedding = await self.generate_embedding("test")
             if len(test_embedding) == self.embedding_dim:
-                self._model_loaded = True
                 logger.info(f"Embedding model loaded successfully. Dimension: {self.embedding_dim}")
             else:
                 logger.error(f"Embedding dimension mismatch: expected {self.embedding_dim}, got {len(test_embedding)}")

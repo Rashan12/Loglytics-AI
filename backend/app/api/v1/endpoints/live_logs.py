@@ -1,14 +1,17 @@
-from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect, Query
+from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect, Query, status, Request, Header
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import List, Optional
+from sqlalchemy import select, and_, desc
+from typing import List, Optional, Dict, Any, Set
 from datetime import datetime, timedelta
 import json
 import logging
+import secrets
+import uuid
 
-from app.database import get_db
+from app.database.session import get_db
 from app.services.auth.dependencies import get_current_active_user
 from app.models.user import User
-from app.models.live_log_connection import LiveLogConnection
+from app.models.live_log_connection import LiveLogConnection, CloudProvider, ConnectionStatus, LiveLog, LiveLogAlert
 from app.models.log_entry import LogEntry
 from app.schemas.live_log_connection import (
     LiveLogConnectionCreate,
@@ -22,10 +25,74 @@ from app.services.live_stream.websocket_broadcaster import WebSocketBroadcaster
 from app.services.live_stream.alert_engine import AlertEngine
 from app.core.security import encrypt_credentials, decrypt_credentials
 from app.utils.helpers import get_redis_client
+from app.services.live_logs.api_key_service import APIKeyService
+from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# WebSocket connection manager
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: Dict[str, Set[WebSocket]] = {}
+    
+    async def connect(self, websocket: WebSocket, connection_id: str):
+        await websocket.accept()
+        if connection_id not in self.active_connections:
+            self.active_connections[connection_id] = set()
+        self.active_connections[connection_id].add(websocket)
+        print(f"🔌 WebSocket connected for connection: {connection_id}")
+    
+    def disconnect(self, websocket: WebSocket, connection_id: str):
+        if connection_id in self.active_connections:
+            self.active_connections[connection_id].discard(websocket)
+            if not self.active_connections[connection_id]:
+                del self.active_connections[connection_id]
+        print(f"🔌 WebSocket disconnected for connection: {connection_id}")
+    
+    async def broadcast_to_connection(self, connection_id: str, message: dict):
+        """Broadcast message to all clients watching a connection"""
+        if connection_id not in self.active_connections:
+            return
+        
+        dead_connections = set()
+        for websocket in self.active_connections[connection_id]:
+            try:
+                await websocket.send_json(message)
+            except:
+                dead_connections.add(websocket)
+        
+        # Remove dead connections
+        for websocket in dead_connections:
+            self.active_connections[connection_id].discard(websocket)
+
+ws_manager = ConnectionManager()
+
+# Enhanced schemas for API key management
+class ConnectionCreate(BaseModel):
+    name: str
+    platform: CloudProvider
+    project_id: Optional[str] = None
+    config: dict = {}
+
+class ConnectionResponse(BaseModel):
+    id: str
+    name: str
+    platform: str
+    status: str
+    api_key_prefix: str
+    tenant_id: str
+    last_seen: Optional[datetime]
+    total_logs_received: int
+    logs_per_minute: int
+    created_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+class ConnectionDetailResponse(ConnectionResponse):
+    api_key: Optional[str] = None  # Only returned on creation
 
 # Global instances (would be injected via dependency injection in production)
 stream_manager = None
@@ -59,66 +126,101 @@ async def get_alert_engine() -> AlertEngine:
         alert_engine = AlertEngine(db, redis_client)
     return alert_engine
 
-@router.post("/connections", response_model=LiveLogConnectionResponse)
+@router.post("/connections", response_model=ConnectionDetailResponse, status_code=status.HTTP_201_CREATED)
 async def create_connection(
-    connection_data: LiveLogConnectionCreate,
+    data: ConnectionCreate,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Create a new live log connection"""
+    """Create a new live log connection with API key"""
+    
+    print(f"\n{'='*60}")
+    print(f"📡 CREATE LIVE LOG CONNECTION")
+    print(f"{'='*60}")
+    print(f"User: {current_user.email}")
+    print(f"Name: {data.name}")
+    print(f"Platform: {data.platform}")
+    print(f"{'='*60}\n")
+    
     try:
-        # Encrypt credentials before storing
-        encrypted_config = encrypt_credentials(connection_data.connection_config)
+        # Generate API key
+        api_key, api_key_hash, api_key_prefix = APIKeyService.generate_api_key()
+        
+        # Generate tenant ID
+        tenant_id = f"{data.platform.value}_{secrets.token_urlsafe(16)}"
         
         # Create connection
         connection = LiveLogConnection(
             id=str(uuid.uuid4()),
-            project_id=connection_data.project_id,
             user_id=current_user.id,
-            connection_name=connection_data.connection_name,
-            cloud_provider=connection_data.cloud_provider,
-            connection_config=encrypted_config,
-            status="inactive"
+            project_id=data.project_id if data.project_id else None,
+            name=data.name,
+            platform=data.platform,
+            status=ConnectionStatus.INACTIVE,
+            api_key_hash=api_key_hash,
+            api_key_prefix=api_key_prefix,
+            tenant_id=tenant_id,
+            config=data.config,
+            # Legacy fields for backward compatibility
+            connection_name=data.name,
+            cloud_provider=data.platform,
+            # Some older schemas have NOT NULL on connection_config; always store JSON string
+            connection_config=json.dumps(data.config if data.config is not None else {})
         )
         
         db.add(connection)
         await db.commit()
         await db.refresh(connection)
         
-        logger.info(f"Created connection {connection.id} for user {current_user.id}")
+        print(f"✅ Connection created: {connection.id}")
+        print(f"🔑 API Key generated (will be shown once)")
         
-        return LiveLogConnectionResponse.from_orm(connection)
+        # Return with API key (only time it's visible)
+        return ConnectionDetailResponse(
+            id=str(connection.id),
+            name=connection.name,
+            platform=connection.platform.value,
+            status=connection.status.value,
+            api_key_prefix=connection.api_key_prefix,
+            tenant_id=connection.tenant_id,
+            last_seen=connection.last_seen,
+            total_logs_received=connection.total_logs_received,
+            logs_per_minute=connection.logs_per_minute,
+            created_at=connection.created_at,
+            api_key=api_key  # ONLY returned here
+        )
         
     except Exception as e:
         logger.error(f"Failed to create connection: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to create connection")
 
-@router.get("/connections/{project_id}", response_model=List[LiveLogConnectionResponse])
+@router.get("/connections", response_model=List[ConnectionResponse])
 async def list_connections(
-    project_id: str,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """List all connections for a project"""
+    """List all connections for current user"""
+    
     try:
-        from sqlalchemy import select
-        
-        query = select(LiveLogConnection).filter(
-            LiveLogConnection.project_id == project_id,
-            LiveLogConnection.user_id == current_user.id
+        result = await db.execute(
+            select(LiveLogConnection)
+            .where(LiveLogConnection.user_id == current_user.id)
+            .order_by(desc(LiveLogConnection.created_at))
         )
-        
-        result = await db.execute(query)
         connections = result.scalars().all()
         
-        # Decrypt credentials for response (but don't expose sensitive data)
-        response_connections = []
-        for conn in connections:
-            conn_dict = conn.__dict__.copy()
-            conn_dict['connection_config'] = {}  # Don't expose encrypted config
-            response_connections.append(LiveLogConnectionResponse(**conn_dict))
-        
-        return response_connections
+        return [ConnectionResponse(
+            id=str(c.id),
+            name=c.name or c.connection_name or "Unnamed Connection",
+            platform=c.platform.value if c.platform else c.cloud_provider.value if c.cloud_provider else "unknown",
+            status=c.status.value,
+            api_key_prefix=c.api_key_prefix or "****",
+            tenant_id=c.tenant_id or "unknown",
+            last_seen=c.last_seen or c.last_sync_at,
+            total_logs_received=c.total_logs_received or 0,
+            logs_per_minute=c.logs_per_minute or 0,
+            created_at=c.created_at
+        ) for c in connections]
         
     except Exception as e:
         logger.error(f"Failed to list connections: {str(e)}")
@@ -216,29 +318,28 @@ async def delete_connection(
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Delete connection"""
+    """Delete a connection"""
+    
     try:
-        from sqlalchemy import select, delete
-        
-        # Stop stream if running
-        stream_mgr = await get_stream_manager()
-        await stream_mgr.stop_stream(connection_id)
-        
-        # Delete from database
-        query = delete(LiveLogConnection).where(
-            LiveLogConnection.id == connection_id,
-            LiveLogConnection.user_id == current_user.id
+        result = await db.execute(
+            select(LiveLogConnection).where(
+                and_(
+                    LiveLogConnection.id == connection_id,
+                    LiveLogConnection.user_id == current_user.id
+                )
+            )
         )
+        connection = result.scalar_one_or_none()
         
-        result = await db.execute(query)
-        await db.commit()
-        
-        if result.rowcount == 0:
+        if not connection:
             raise HTTPException(status_code=404, detail="Connection not found")
+        
+        await db.delete(connection)
+        await db.commit()
         
         logger.info(f"Deleted connection {connection_id}")
         
-        return {"message": "Connection deleted successfully"}
+        return {"message": "Connection deleted"}
         
     except HTTPException:
         raise
@@ -836,3 +937,372 @@ async def health_check():
         },
         "timestamp": datetime.utcnow().isoformat()
     }
+
+@router.post("/ingest")
+async def ingest_logs(
+    request: Request,
+    authorization: str = Header(None),
+    x_tenant_id: str = Header(None),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Ingest endpoint for Fluent Bit agents
+    Accepts json_lines format logs
+    """
+    print(f"\n{'='*60}")
+    print(f"📥 LOG INGEST REQUEST")
+    print(f"{'='*60}")
+    
+    # Validate authorization
+    if not authorization or not authorization.startswith("Bearer "):
+        print("❌ Missing or invalid authorization header")
+        raise HTTPException(status_code=401, detail="Missing authorization")
+    
+    if not x_tenant_id:
+        print("❌ Missing X-Tenant-ID header")
+        raise HTTPException(status_code=400, detail="Missing X-Tenant-ID")
+    
+    api_key = authorization.split(" ", 1)[1]
+    
+    # Find connection by tenant_id
+    result = await db.execute(
+        select(LiveLogConnection).where(LiveLogConnection.tenant_id == x_tenant_id)
+    )
+    connection = result.scalar_one_or_none()
+    
+    if not connection:
+        print(f"❌ Connection not found for tenant: {x_tenant_id}")
+        raise HTTPException(status_code=403, detail="Invalid tenant")
+    
+    # Verify API key
+    if not APIKeyService.verify_api_key(api_key, connection.api_key_hash):
+        print(f"❌ Invalid API key for tenant: {x_tenant_id}")
+        raise HTTPException(status_code=403, detail="Invalid API key")
+    
+    print(f"✅ Authentication successful")
+    print(f"Connection: {connection.name} ({connection.platform.value})")
+    
+    # Parse body (json_lines format from Fluent Bit)
+    body = await request.body()
+    text = body.decode("utf-8", errors="ignore")
+    
+    logs = []
+    try:
+        # Try parsing as newline-delimited JSON
+        for line in text.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            logs.append(json.loads(line))
+    except Exception:
+        # Try parsing as JSON array
+        try:
+            data = json.loads(text)
+            if isinstance(data, list):
+                logs = data
+            elif isinstance(data, dict):
+                logs = [data]
+        except Exception as e:
+            print(f"❌ Failed to parse logs: {e}")
+            raise HTTPException(status_code=400, detail="Invalid JSON format")
+    
+    print(f"📊 Received {len(logs)} log entries")
+    
+    # Store logs
+    stored_count = 0
+    for log_data in logs:
+        try:
+            # Parse log entry
+            log_entry = parse_log_entry(log_data, connection.platform)
+            
+            # Create LiveLog record
+            live_log = LiveLog(
+                connection_id=connection.id,
+                timestamp=log_entry.get("timestamp", datetime.utcnow()),
+                log_level=log_entry.get("level"),
+                message=log_entry.get("message", ""),
+                source=log_entry.get("source"),
+                parsed_data=log_data
+            )
+            
+            db.add(live_log)
+            stored_count += 1
+            
+            # Broadcast to WebSocket clients
+            try:
+                await ws_manager.broadcast_to_connection(
+                    str(connection.id),
+                    {
+                        "type": "new_log",
+                        "data": {
+                            "timestamp": log_entry.get("timestamp", datetime.utcnow()).isoformat(),
+                            "level": log_entry.get("level"),
+                            "message": log_entry.get("message", ""),
+                            "source": log_entry.get("source"),
+                        }
+                    }
+                )
+            except Exception as e:
+                print(f"⚠️ Error broadcasting log: {e}")
+            
+        except Exception as e:
+            print(f"⚠️ Error storing log: {e}")
+            continue
+    
+    # Update connection stats
+    connection.last_seen = datetime.utcnow()
+    connection.total_logs_received += stored_count
+    connection.status = ConnectionStatus.ACTIVE
+    
+    await db.commit()
+    
+    print(f"✅ Stored {stored_count} logs")
+    print(f"{'='*60}\n")
+    
+    return {
+        "received": len(logs),
+        "stored": stored_count,
+        "tenant_id": x_tenant_id,
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+@router.get("/ingest/test")
+async def test_connection(
+    authorization: str = Header(None),
+    x_tenant_id: str = Header(None),
+    db: AsyncSession = Depends(get_db)
+):
+    """Test endpoint for validating connection"""
+    
+    if not authorization or not x_tenant_id:
+        raise HTTPException(status_code=400, detail="Missing headers")
+    
+    api_key = authorization.split(" ", 1)[1] if authorization.startswith("Bearer ") else ""
+    
+    result = await db.execute(
+        select(LiveLogConnection).where(LiveLogConnection.tenant_id == x_tenant_id)
+    )
+    connection = result.scalar_one_or_none()
+    
+    if not connection or not APIKeyService.verify_api_key(api_key, connection.api_key_hash):
+        raise HTTPException(status_code=403, detail="Invalid credentials")
+    
+    return {
+        "ok": True,
+        "connection_name": connection.name,
+        "platform": connection.platform.value,
+        "status": connection.status.value,
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+@router.websocket("/ws/{connection_id}")
+async def websocket_endpoint(
+    websocket: WebSocket,
+    connection_id: str,
+    db: AsyncSession = Depends(get_db)
+):
+    """WebSocket endpoint for real-time log streaming"""
+    
+    await ws_manager.connect(websocket, connection_id)
+    
+    try:
+        # Send initial connection info
+        result = await db.execute(
+            select(LiveLogConnection).where(LiveLogConnection.id == connection_id)
+        )
+        connection = result.scalar_one_or_none()
+        
+        if connection:
+            await websocket.send_json({
+                "type": "connection_info",
+                "data": {
+                    "id": str(connection.id),
+                    "name": connection.name,
+                    "platform": connection.platform.value,
+                    "status": connection.status.value,
+                }
+            })
+        
+        # Keep connection alive
+        while True:
+            data = await websocket.receive_text()
+            
+            # Handle ping/pong
+            if data == "ping":
+                await websocket.send_text("pong")
+            
+    except WebSocketDisconnect:
+        ws_manager.disconnect(websocket, connection_id)
+
+@router.get("/connections/{connection_id}/logs")
+async def get_connection_logs(
+    connection_id: str,
+    limit: int = 50,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get recent logs for a connection"""
+    
+    # Verify user owns connection
+    result = await db.execute(
+        select(LiveLogConnection).where(
+            and_(
+                LiveLogConnection.id == connection_id,
+                LiveLogConnection.user_id == current_user.id
+            )
+        )
+    )
+    connection = result.scalar_one_or_none()
+    
+    if not connection:
+        raise HTTPException(status_code=404, detail="Connection not found")
+    
+    # Get logs
+    result = await db.execute(
+        select(LiveLog)
+        .where(LiveLog.connection_id == connection_id)
+        .order_by(desc(LiveLog.timestamp))
+        .limit(limit)
+    )
+    logs = result.scalars().all()
+    
+    return [{
+        "id": str(log.id),
+        "timestamp": log.timestamp.isoformat(),
+        "level": log.log_level,
+        "message": log.message,
+        "source": log.source,
+        "is_error": log.is_error,
+        "is_anomaly": log.is_anomaly,
+        "ai_summary": log.ai_summary,
+    } for log in reversed(logs)]
+
+def parse_log_entry(log_data: Dict[str, Any], platform: CloudProvider) -> Dict[str, Any]:
+    """Parse log entry based on platform"""
+    
+    parsed = {}
+    
+    # Common fields
+    if "log" in log_data:
+        parsed["message"] = log_data["log"]
+    elif "message" in log_data:
+        parsed["message"] = log_data["message"]
+    else:
+        parsed["message"] = json.dumps(log_data)
+    
+    # Timestamp
+    if "time" in log_data:
+        try:
+            parsed["timestamp"] = datetime.fromisoformat(log_data["time"].replace("Z", "+00:00"))
+        except:
+            parsed["timestamp"] = datetime.utcnow()
+    else:
+        parsed["timestamp"] = datetime.utcnow()
+    
+    # Level
+    if "level" in log_data:
+        parsed["level"] = log_data["level"].upper()
+    elif "severity" in log_data:
+        parsed["level"] = log_data["severity"].upper()
+    else:
+        # Try to detect from message
+        message_lower = parsed["message"].lower()
+        if "error" in message_lower or "fatal" in message_lower:
+            parsed["level"] = "ERROR"
+        elif "warn" in message_lower:
+            parsed["level"] = "WARN"
+        else:
+            parsed["level"] = "INFO"
+    
+    # Source (container, function, etc.)
+    if "kubernetes" in log_data:
+        k8s = log_data["kubernetes"]
+        parsed["source"] = f"{k8s.get('namespace_name', 'unknown')}/{k8s.get('pod_name', 'unknown')}"
+    elif "container_name" in log_data:
+        parsed["source"] = log_data["container_name"]
+    elif "function_name" in log_data:
+        parsed["source"] = log_data["function_name"]
+    else:
+        parsed["source"] = "unknown"
+    
+    return parsed
+
+
+# ===== ALERTS ENDPOINTS =====
+
+@router.get("/alerts", response_model=List[dict])
+async def get_user_alerts(
+    unread_only: bool = False,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get alerts for current user"""
+    
+    query = select(LiveLogAlert).where(LiveLogAlert.user_id == current_user.id)
+    
+    if unread_only:
+        query = query.where(LiveLogAlert.read == False)
+    
+    query = query.order_by(desc(LiveLogAlert.created_at)).limit(50)
+    
+    result = await db.execute(query)
+    alerts = result.scalars().all()
+    
+    return [{
+        "id": str(alert.id),
+        "alert_type": alert.alert_type,
+        "severity": alert.severity,
+        "title": alert.title,
+        "description": alert.description,
+        "read": alert.read,
+        "created_at": alert.created_at.isoformat(),
+    } for alert in alerts]
+
+
+@router.patch("/alerts/{alert_id}/read")
+async def mark_alert_read(
+    alert_id: str,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Mark alert as read"""
+    
+    result = await db.execute(
+        select(LiveLogAlert).where(
+            and_(
+                LiveLogAlert.id == alert_id,
+                LiveLogAlert.user_id == current_user.id
+            )
+        )
+    )
+    alert = result.scalar_one_or_none()
+    
+    if not alert:
+        raise HTTPException(status_code=404, detail="Alert not found")
+    
+    alert.read = True
+    await db.commit()
+    
+    return {"message": "Alert marked as read"}
+
+
+@router.get("/alerts/unread-count")
+async def get_unread_count(
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get count of unread alerts"""
+    
+    from sqlalchemy import func
+    
+    result = await db.execute(
+        select(func.count(LiveLogAlert.id)).where(
+            and_(
+                LiveLogAlert.user_id == current_user.id,
+                LiveLogAlert.read == False
+            )
+        )
+    )
+    count = result.scalar()
+    
+    return {"count": count}

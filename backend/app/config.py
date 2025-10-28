@@ -24,6 +24,12 @@ class Settings(BaseSettings):
     APP_NAME: str = Field(default="Loglytics AI", env="APP_NAME")
     APP_VERSION: str = Field(default="1.0.0", env="APP_VERSION")
     DEBUG: bool = Field(default=False, env="DEBUG")
+    
+    # JWT Settings
+    SECRET_KEY: str = Field(default="your-secret-key-change-in-production", env="SECRET_KEY")
+    ALGORITHM: str = Field(default="HS256", env="ALGORITHM")
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(default=10080, env="ACCESS_TOKEN_EXPIRE_MINUTES")  # 7 days
+    REFRESH_TOKEN_EXPIRE_DAYS: int = Field(default=30, env="REFRESH_TOKEN_EXPIRE_DAYS")
 
     # PostgreSQL Database Configuration
     POSTGRES_USER: str = Field(default="postgres", env="POSTGRES_USER")

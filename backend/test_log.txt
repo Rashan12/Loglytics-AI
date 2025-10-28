@@ -1,0 +1,5 @@
+2024-01-15 10:30:15 INFO Application started
+2024-01-15 10:30:16 INFO Database connection established
+2024-01-15 10:30:17 ERROR Failed to load configuration
+2024-01-15 10:30:18 WARN Using default configuration
+2024-01-15 10:30:19 INFO Server listening on port 8080

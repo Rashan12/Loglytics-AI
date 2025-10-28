@@ -24,7 +24,7 @@ class RAGQuery:
     context: Optional[Dict[str, Any]] = None
     filters: Optional[Dict[str, Any]] = None
     max_chunks: int = 5
-    similarity_threshold: float = 0.7
+    similarity_threshold: float = 0.05
     use_reranking: bool = True
 
 @dataclass

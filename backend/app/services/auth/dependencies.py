@@ -5,13 +5,12 @@ Provides dependency functions for protected endpoints
 
 from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional, Dict, Any
 import logging
 
-from app.database import get_db
+from app.database.session import get_db
 from app.services.auth.auth_service import AuthService
-from app.services.auth.jwt_handler import JWTHandler
 from app.schemas.user import UserResponse
 from app.models.user import SubscriptionTier
 
@@ -24,12 +23,12 @@ class AuthDependencies:
     """Authentication dependency functions"""
     
     def __init__(self):
-        self.jwt_handler = JWTHandler()
+        pass
     
     async def get_current_user(
         self,
         credentials: HTTPAuthorizationCredentials = Depends(security),
-        db: Session = Depends(get_db)
+        db: AsyncSession = Depends(get_db)
     ) -> UserResponse:
         """
         Get current authenticated user from JWT token
@@ -71,13 +70,15 @@ class AuthDependencies:
     
     async def get_current_active_user(
         self,
-        current_user: UserResponse = Depends(lambda: AuthDependencies().get_current_user)
+        credentials: HTTPAuthorizationCredentials = Depends(security),
+        db: AsyncSession = Depends(get_db)
     ) -> UserResponse:
         """
         Get current active user (additional check for active status)
         
         Args:
-            current_user: Current user from get_current_user
+            credentials: HTTP authorization credentials
+            db: Database session
             
         Returns:
             Active user data
@@ -85,17 +86,41 @@ class AuthDependencies:
         Raises:
             HTTPException: If user is inactive
         """
-        if not current_user.is_active:
+        try:
+            token = credentials.credentials
+            auth_service = AuthService(db)
+            
+            success, user, error_message = await auth_service.get_current_user(token)
+            
+            if not success or not user:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail=error_message or "Could not validate credentials",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+            
+            if not user.is_active:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Inactive user"
+                )
+            
+            return user
+            
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Error in get_current_active_user: {e}")
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Inactive user"
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Could not validate credentials",
+                headers={"WWW-Authenticate": "Bearer"},
             )
-        return current_user
     
     async def get_current_user_optional(
         self,
         credentials: Optional[HTTPAuthorizationCredentials] = Depends(HTTPBearer(auto_error=False)),
-        db: Session = Depends(get_db)
+        db: AsyncSession = Depends(get_db)
     ) -> Optional[UserResponse]:
         """
         Get current user if authenticated, None otherwise
@@ -124,7 +149,7 @@ class AuthDependencies:
     async def get_current_user_from_api_key(
         self,
         request: Request,
-        db: Session = Depends(get_db)
+        db: AsyncSession = Depends(get_db)
     ) -> Optional[UserResponse]:
         """
         Get current user from API key (X-API-Key header)
@@ -153,7 +178,7 @@ class AuthDependencies:
         self,
         request: Request,
         credentials: Optional[HTTPAuthorizationCredentials] = Depends(HTTPBearer(auto_error=False)),
-        db: Session = Depends(get_db)
+        db: AsyncSession = Depends(get_db)
     ) -> Optional[UserResponse]:
         """
         Get current user from either JWT token or API key
@@ -213,7 +238,7 @@ class AuthDependencies:
     
     async def require_pro_subscription(
         self,
-        current_user: UserResponse = Depends(lambda: AuthDependencies().get_current_active_user)
+        current_user: UserResponse = Depends(get_current_active_user)
     ) -> UserResponse:
         """
         Require Pro subscription
@@ -236,7 +261,7 @@ class AuthDependencies:
     
     async def require_admin(
         self,
-        current_user: UserResponse = Depends(lambda: AuthDependencies().get_current_active_user)
+        current_user: UserResponse = Depends(get_current_active_user)
     ) -> UserResponse:
         """
         Require admin privileges

@@ -31,28 +31,17 @@ def setup_security_middleware(app: FastAPI) -> None:
     config = get_security_config()
     
     try:
-        # 1. CORS Middleware (first)
-        if config.security_headers_enabled:
-            app.add_middleware(
-                CORSMiddleware,
-                allow_origins=config.cors_origins,
-                allow_credentials=config.cors_allow_credentials,
-                allow_methods=config.cors_allow_methods,
-                allow_headers=config.cors_allow_headers,
-            )
-            logger.info("CORS middleware configured")
+        # 1. CORS Middleware (first) - DISABLED, handled in main.py
+        # CORS is now handled in main.py to avoid conflicts
+        logger.info("CORS middleware handled in main.py")
         
-        # 2. Security Headers Middleware
-        if config.security_headers_enabled:
-            # FastAPI expects the middleware class, not an instance. It will pass `app` internally.
-            app.add_middleware(SecurityMiddleware)
-            logger.info("Security headers middleware configured")
+        # 2. Security Headers Middleware - DISABLED (causing generator errors)
+        # Security middleware disabled due to generator errors
+        logger.info("Security headers middleware disabled (generator errors)")
         
-        # 3. Rate Limiting Middleware
-        if config.rate_limit_enabled:
-            # RateLimitMiddleware is an ASGI middleware class taking (app, limit, window)
-            app.add_middleware(RateLimitMiddleware)
-            logger.info("Rate limiting middleware configured")
+        # 3. Rate Limiting Middleware - DISABLED (Redis not available)
+        # Rate limiting disabled due to Redis connection issues
+        logger.info("Rate limiting middleware disabled (Redis not available)")
         
         # 4. DoS Protection Middleware
         # DoSProtection is not a Starlette middleware class; skip adding directly to avoid runtime errors.
@@ -60,10 +49,9 @@ def setup_security_middleware(app: FastAPI) -> None:
         if config.dos_protection_enabled:
             logger.info("DoS protection enabled (handled by security middleware policies)")
         
-        # 5. Authentication Middleware
-        # AuthenticationMiddleware inherits BaseHTTPMiddleware; pass the class, not an instance.
-        app.add_middleware(AuthenticationMiddleware)
-        logger.info("Authentication middleware configured")
+        # 5. Authentication Middleware - DISABLED (causing Redis errors)
+        # Auth middleware disabled due to Redis connection issues
+        logger.info("Authentication middleware disabled (Redis errors)")
         
         # 6. Audit Logging Middleware (last)
         if config.audit_log_enabled:

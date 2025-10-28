@@ -6,7 +6,7 @@ Semantic search and ranking for RAG system
 import logging
 from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.rag.vector_store import VectorStore
 from app.services.rag.embedding_service import get_embedding_service
@@ -27,7 +27,7 @@ class RetrievalResult:
 class RetrievalService:
     """Service for semantic search and retrieval"""
     
-    def __init__(self, db: Session):
+    def __init__(self, db: AsyncSession):
         self.db = db
         self.vector_store = VectorStore(db)
         self.embedding_service = None
@@ -42,7 +42,7 @@ class RetrievalService:
         project_id: str,
         user_id: str,
         limit: int = 5,
-        similarity_threshold: float = 0.7,
+        similarity_threshold: float = 0.05,
         filters: Optional[Dict[str, Any]] = None,
         use_hybrid_search: bool = True
     ) -> List[RetrievalResult]:

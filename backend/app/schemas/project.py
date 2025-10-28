@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, ConfigDict
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
 
 
@@ -29,3 +29,8 @@ class ProjectResponse(ProjectBase):
 class Project(ProjectResponse):
     """Alias for ProjectResponse for backward compatibility"""
     pass
+
+
+class ProjectListResponse(BaseModel):
+    projects: List[ProjectResponse]
+    total: int
