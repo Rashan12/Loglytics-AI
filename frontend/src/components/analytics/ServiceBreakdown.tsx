@@ -172,7 +172,6 @@ export function ServiceBreakdown({ data, className }: ServiceBreakdownProps) {
         <Treemap
           data={serviceData}
           dataKey="count"
-          ratio={4/3}
           stroke="#fff"
           fill="#8884d8"
           content={<CustomContent />}

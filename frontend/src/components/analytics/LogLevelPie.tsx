@@ -125,7 +125,7 @@ export function LogLevelPie({ data, className }: LogLevelPieProps) {
             outerRadius={100}
             fill="#8884d8"
             dataKey="value"
-            activeIndex={activeIndex}
+            activeIndex={activeIndex || undefined}
             onMouseEnter={(_, index) => setActiveIndex(index)}
             onMouseLeave={() => setActiveIndex(null)}
           >

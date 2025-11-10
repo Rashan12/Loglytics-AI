@@ -1,125 +1,119 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Bell, Sun, Moon, Search, Command } from 'lucide-react';
+import { Sun, Moon, User } from 'lucide-react';
 import { useUIStore } from '@/store/ui-store';
 import { useTheme } from 'next-themes';
+import { useAuthStore } from '@/store/auth-store';
+import { motion } from 'framer-motion';
+import { AlertBell } from '@/components/live-logs/alert-bell';
+import { cn } from '@/lib/utils';
 
 export default function TopBar() {
   const { sidebarCollapsed } = useUIStore();
-  const { theme, setTheme } = useTheme();
-  const [notifications, setNotifications] = useState([]);
-  const [showNotifications, setShowNotifications] = useState(false);
-  const [unreadCount, setUnreadCount] = useState(3);
+  const { theme, setTheme, resolvedTheme } = useTheme();
+  const { user } = useAuthStore();
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   const toggleTheme = () => {
-    setTheme(theme === 'dark' ? 'light' : 'dark');
+    setTheme(resolvedTheme === 'dark' ? 'light' : 'dark');
   };
 
+  const isDark = mounted && resolvedTheme === 'dark';
+  const sidebarWidth = sidebarCollapsed ? 80 : 280;
+
   return (
-    <header className="h-16 bg-[#0F1419] dark:bg-[#0F1419] light:bg-white border-b border-[#30363D] dark:border-[#30363D] light:border-gray-200 sticky top-0 z-40 w-full">
-      <div className="h-full px-8 flex items-center justify-between">
-        {/* Breadcrumb */}
-        <div className="flex items-center gap-2 text-sm">
-          <span className="text-gray-400 dark:text-gray-400 light:text-gray-600">Dashboard</span>
-          <span className="text-gray-600 dark:text-gray-600 light:text-gray-400">/</span>
-          <span className="text-white dark:text-white light:text-gray-900 font-medium">Analytics</span>
-        </div>
-
-        {/* Right Actions */}
-        <div className="flex items-center gap-4">
-          {/* Command Palette */}
-          <button className="flex items-center gap-2 px-3 py-1.5 bg-[#161B22] dark:bg-[#161B22] light:bg-gray-100 border border-[#30363D] dark:border-[#30363D] light:border-gray-200 rounded-lg text-gray-400 dark:text-gray-400 light:text-gray-600 hover:text-white dark:hover:text-white light:hover:text-gray-900 hover:border-blue-600 transition-colors">
-            <Command className="w-4 h-4" />
-            <span className="text-sm">Quick Actions</span>
-            <kbd className="px-1.5 py-0.5 bg-[#0F1419] dark:bg-[#0F1419] light:bg-gray-200 border border-[#30363D] dark:border-[#30363D] light:border-gray-300 rounded text-xs">⌘K</kbd>
-          </button>
-
-          {/* Theme Toggle */}
-          <button
-            onClick={toggleTheme}
-            className="p-2 rounded-lg hover:bg-[#1C2128] dark:hover:bg-[#1C2128] light:hover:bg-gray-100 transition-colors group"
-            title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
-          >
-            {theme === 'dark' ? (
-              <Sun className="w-5 h-5 text-gray-400 group-hover:text-yellow-500 transition-colors" />
-            ) : (
-              <Moon className="w-5 h-5 text-gray-600 group-hover:text-blue-500 transition-colors" />
-            )}
-          </button>
-
-          {/* Notifications */}
-          <div className="relative">
-            <button
-              onClick={() => setShowNotifications(!showNotifications)}
-              className="relative p-2 rounded-lg hover:bg-[#1C2128] dark:hover:bg-[#1C2128] light:hover:bg-gray-100 transition-colors"
-            >
-              <Bell className="w-5 h-5 text-gray-400 dark:text-gray-400 light:text-gray-600" />
-              {unreadCount > 0 && (
-                <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full animate-pulse" />
-              )}
-            </button>
-
-            {/* Notifications Dropdown */}
-            {showNotifications && (
-              <div className="absolute right-0 top-12 w-96 bg-[#161B22] dark:bg-[#161B22] light:bg-white border border-[#30363D] dark:border-[#30363D] light:border-gray-200 rounded-lg shadow-2xl animate-slideUp">
-                <div className="p-4 border-b border-[#30363D] dark:border-[#30363D] light:border-gray-200">
-                  <h3 className="text-white dark:text-white light:text-gray-900 font-semibold">Notifications</h3>
-                  <p className="text-xs text-gray-400 dark:text-gray-400 light:text-gray-600 mt-1">{unreadCount} unread</p>
-                </div>
-
-                <div className="max-h-96 overflow-y-auto">
-                  {/* Notification Items */}
-                  <div className="p-4 border-b border-[#30363D] dark:border-[#30363D] light:border-gray-200 hover:bg-[#1C2128] dark:hover:bg-[#1C2128] light:hover:bg-gray-50 cursor-pointer transition-colors">
-                    <div className="flex items-start gap-3">
-                      <div className="w-2 h-2 bg-blue-500 rounded-full mt-2 flex-shrink-0" />
-                      <div className="flex-1">
-                        <p className="text-sm text-white dark:text-white light:text-gray-900 font-medium">High error rate detected</p>
-                        <p className="text-xs text-gray-400 dark:text-gray-400 light:text-gray-600 mt-1">API Gateway showing 15% error rate</p>
-                        <p className="text-xs text-gray-500 dark:text-gray-500 light:text-gray-500 mt-2">2 minutes ago</p>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="p-4 border-b border-[#30363D] dark:border-[#30363D] light:border-gray-200 hover:bg-[#1C2128] dark:hover:bg-[#1C2128] light:hover:bg-gray-50 cursor-pointer transition-colors">
-                    <div className="flex items-start gap-3">
-                      <div className="w-2 h-2 bg-green-500 rounded-full mt-2 flex-shrink-0" />
-                      <div className="flex-1">
-                        <p className="text-sm text-white dark:text-white light:text-gray-900 font-medium">Log file processed successfully</p>
-                        <p className="text-xs text-gray-400 dark:text-gray-400 light:text-gray-600 mt-1">Mobile App logs (2.4 MB)</p>
-                        <p className="text-xs text-gray-500 dark:text-gray-500 light:text-gray-500 mt-2">5 minutes ago</p>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="p-4 border-b border-[#30363D] dark:border-[#30363D] light:border-gray-200 hover:bg-[#1C2128] dark:hover:bg-[#1C2128] light:hover:bg-gray-50 cursor-pointer transition-colors">
-                    <div className="flex items-start gap-3">
-                      <div className="w-2 h-2 bg-yellow-500 rounded-full mt-2 flex-shrink-0" />
-                      <div className="flex-1">
-                        <p className="text-sm text-white dark:text-white light:text-gray-900 font-medium">Memory usage above 80%</p>
-                        <p className="text-xs text-gray-400 dark:text-gray-400 light:text-gray-600 mt-1">Database Cluster - Optimize queries</p>
-                        <p className="text-xs text-gray-500 dark:text-gray-500 light:text-gray-500 mt-2">2 hours ago</p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="p-3 border-t border-[#30363D] dark:border-[#30363D] light:border-gray-200">
-                  <button className="w-full text-center text-sm text-blue-500 hover:text-blue-400 font-medium transition-colors">
-                    View All Notifications
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* System Status */}
-          <div className="flex items-center gap-2 px-3 py-1.5 bg-green-500/10 border border-green-500/30 rounded-lg">
-            <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
-            <span className="text-xs text-green-500 font-semibold">All systems operational</span>
-          </div>
+    <motion.div
+      initial={false}
+      animate={{ left: sidebarWidth }}
+      transition={{ duration: 0.3, ease: [0.4, 0, 0.2, 1] }}
+      className={cn(
+        "fixed top-0 right-0 h-20 z-40 px-8 flex items-center justify-between transition-colors duration-300",
+        isDark 
+          ? "bg-[#12172A]/80 border-[#2E9BFF]/20" 
+          : "bg-white/80 border-gray-200"
+      )}
+      style={{
+        backdropFilter: 'blur(24px)',
+        borderBottom: '1px solid',
+      }}
+    >
+      {/* Left side - System Status */}
+      <div className="flex items-center gap-4">
+        <div className={cn(
+          "flex items-center gap-2 px-3 py-1.5 rounded-full border transition-colors",
+          isDark
+            ? "bg-[#10B981]/10 border-[#10B981]/30"
+            : "bg-green-50 border-green-200"
+        )}>
+          <div className={cn(
+            "w-2 h-2 rounded-full animate-pulse",
+            isDark ? "bg-[#10B981]" : "bg-green-500"
+          )} />
+          <span className={cn(
+            "text-xs font-semibold",
+            isDark ? "text-[#10B981]" : "text-green-700"
+          )}>
+            All systems operational
+          </span>
         </div>
       </div>
-    </header>
+
+      {/* Right Actions */}
+      <div className="flex items-center gap-3">
+        {/* WORKING Notification Bell - from live-logs */}
+        <AlertBell />
+
+        {/* Theme Toggle */}
+        <button
+          onClick={toggleTheme}
+          className={cn(
+            "p-2.5 rounded-xl transition-all",
+            isDark
+              ? "bg-[#1E293B] hover:bg-[#334155] text-[#94A3B8] hover:text-[#2E9BFF]"
+              : "bg-gray-100 hover:bg-gray-200 text-gray-600 hover:text-blue-600"
+          )}
+        >
+          {!mounted ? (
+            <div className="w-5 h-5" />
+          ) : isDark ? (
+            <Sun className="w-5 h-5" />
+          ) : (
+            <Moon className="w-5 h-5" />
+          )}
+        </button>
+
+        {/* Profile */}
+        <button className={cn(
+          "flex items-center gap-3 pl-3 pr-4 py-2 rounded-xl transition-all",
+          isDark
+            ? "bg-[#1E293B] hover:bg-[#334155]"
+            : "bg-gray-100 hover:bg-gray-200"
+        )}>
+          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-[#2E9BFF] to-[#8B5CF6] flex items-center justify-center">
+            <User className="w-4 h-4 text-white" />
+          </div>
+          <div className="text-left">
+            <div className={cn(
+              "text-sm font-semibold",
+              isDark ? "text-[#F9FAFB]" : "text-gray-900"
+            )}>
+              {user?.full_name || 'User'}
+            </div>
+            <div className={cn(
+              "text-xs",
+              isDark ? "text-[#64748B]" : "text-gray-500"
+            )}>
+              {user?.email || 'user@example.com'}
+            </div>
+          </div>
+        </button>
+      </div>
+    </motion.div>
   );
 }
+

@@ -77,7 +77,11 @@ const presets = [
 
 export function DateRangePicker({ value, onChange, className }: DateRangePickerProps) {
   const [isOpen, setIsOpen] = React.useState(false)
-  const [tempRange, setTempRange] = React.useState<DateRange>(value)
+  const [tempRange, setTempRange] = React.useState<{
+    from: Date | undefined
+    to: Date | undefined
+    preset?: 'last_hour' | 'last_24h' | 'last_7d' | 'last_30d' | 'custom'
+  }>(value)
 
   const handlePresetChange = (presetValue: string) => {
     const preset = presets.find(p => p.value === presetValue)
@@ -88,31 +92,39 @@ export function DateRangePicker({ value, onChange, className }: DateRangePickerP
     }
   }
 
-  const handleDateSelect = (selectedDate: Date | undefined) => {
-    if (!selectedDate) return
+  const handleDateSelect = (range: { from: Date | undefined; to: Date | undefined } | undefined) => {
+    if (!range) return
 
-    if (!tempRange.from || (tempRange.from && tempRange.to)) {
+    if (!range.from || (range.from && range.to)) {
       // Start new range
       setTempRange({
-        from: selectedDate,
+        from: range.from,
         to: undefined,
         preset: "custom"
       })
-    } else {
+    } else if (range.from && range.to) {
       // Complete range
       const newRange = {
-        from: tempRange.from,
-        to: selectedDate,
+        from: range.from,
+        to: range.to,
         preset: "custom" as const
       }
       setTempRange(newRange)
-      onChange(newRange)
+      onChange({
+        from: newRange.from,
+        to: newRange.to,
+        preset: 'custom'
+      })
     }
   }
 
   const handleApply = () => {
     if (tempRange.from && tempRange.to) {
-      onChange(tempRange)
+      onChange({
+        from: tempRange.from,
+        to: tempRange.to,
+        preset: tempRange.preset || 'custom'
+      })
       setIsOpen(false)
     }
   }
@@ -182,7 +194,7 @@ export function DateRangePicker({ value, onChange, className }: DateRangePickerP
                   from: tempRange.from,
                   to: tempRange.to
                 }}
-                onSelect={handleDateSelect}
+                onSelect={handleDateSelect as any}
                 numberOfMonths={2}
                 disabled={(date) => date > new Date() || date < new Date("1900-01-01")}
               />

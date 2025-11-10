@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>API Config Test</title>
+</head>
+<body>
+    <h1>API Configuration Test</h1>
+    <div id="output"></div>
+    
+    <script>
+        // Test the API configuration
+        const API_BASE_URL = process?.env?.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+        const API_V1 = `${API_BASE_URL}/api/v1`;
+        
+        console.log('API Configuration Test:');
+        console.log('Base URL:', API_BASE_URL);
+        console.log('API V1:', API_V1);
+        console.log('Login URL:', `${API_V1}/auth/login`);
+        
+        document.getElementById('output').innerHTML = `
+            <p><strong>Base URL:</strong> ${API_BASE_URL}</p>
+            <p><strong>API V1:</strong> ${API_V1}</p>
+            <p><strong>Login URL:</strong> ${API_V1}/auth/login</p>
+        `;
+        
+        // Test the actual login endpoint
+        fetch(`${API_V1}/auth/login`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                email: 'rashandissanayaka@gmail.com',
+                password: 'Rashan@12'
+            })
+        })
+        .then(response => {
+            console.log('Login test response status:', response.status);
+            if (response.ok) {
+                console.log('✅ Login endpoint working!');
+                document.getElementById('output').innerHTML += '<p style="color: green;">✅ Login endpoint working!</p>';
+            } else {
+                console.log('❌ Login endpoint failed:', response.status);
+                document.getElementById('output').innerHTML += `<p style="color: red;">❌ Login endpoint failed: ${response.status}</p>`;
+            }
+        })
+        .catch(error => {
+            console.log('❌ Login test error:', error);
+            document.getElementById('output').innerHTML += `<p style="color: red;">❌ Login test error: ${error.message}</p>`;
+        });
+    </script>
+</body>
+</html>

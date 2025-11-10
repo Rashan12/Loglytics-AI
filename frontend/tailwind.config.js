@@ -131,9 +131,15 @@ module.exports = {
         },
       },
       borderRadius: {
-        lg: "var(--radius)",
-        md: "calc(var(--radius) - 2px)",
-        sm: "calc(var(--radius) - 4px)",
+        'sm': '6px',
+        'DEFAULT': '10px',
+        'md': '12px',
+        'lg': '16px',
+        'xl': '20px',
+        '2xl': '24px',
+        'lg': "var(--radius)",
+        'md': "calc(var(--radius) - 2px)",
+        'sm': "calc(var(--radius) - 4px)",
       },
       keyframes: {
         "accordion-down": {

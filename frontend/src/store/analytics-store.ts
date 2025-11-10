@@ -215,24 +215,18 @@ export const stopAutoRefresh = () => {
 }
 
 // Subscribe to auto-refresh changes
-useAnalyticsStore.subscribe(
-  (state) => state.autoRefresh,
-  (autoRefresh) => {
-    if (autoRefresh) {
-      startAutoRefresh()
-    } else {
-      stopAutoRefresh()
-    }
+useAnalyticsStore.subscribe((state) => {
+  if (state.autoRefresh) {
+    startAutoRefresh()
+  } else {
+    stopAutoRefresh()
   }
-)
+})
 
 // Subscribe to refresh interval changes
-useAnalyticsStore.subscribe(
-  (state) => state.refreshInterval,
-  (interval) => {
-    if (useAnalyticsStore.getState().autoRefresh) {
-      stopAutoRefresh()
-      startAutoRefresh()
-    }
+useAnalyticsStore.subscribe((state) => {
+  if (state.autoRefresh) {
+    stopAutoRefresh()
+    startAutoRefresh()
   }
-)
+})

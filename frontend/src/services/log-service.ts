@@ -1,4 +1,4 @@
-import { api } from '@/lib/api'
+import api from '@/lib/api'
 import { LogFile, LogEntry, PaginatedResponse } from '@/types'
 
 export const logService = {

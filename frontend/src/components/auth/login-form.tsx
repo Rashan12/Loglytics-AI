@@ -33,36 +33,44 @@ export function LoginForm({ onSuccess, className }: LoginFormProps) {
     watch,
   } = useForm<LoginFormData>({
     resolver: zodResolver(loginSchema),
-    mode: "onChange",
+    mode: "onBlur",
   })
 
 
 
   const onSubmit = async (data: LoginFormData) => {
+    console.log('🔐 Login form submitted with data:', data)
     try {
       setIsSubmitting(true)
       setLoading(true)
       setError(null)
 
+      console.log('📤 Making API request to /auth/login')
       const response = await apiClient.post<{
         access_token: string
-        refresh_token: string
         token_type: string
-        expires_in: number
         user: any
       }>("/auth/login", data)
 
-      const { access_token, refresh_token, user } = response.data
+      console.log('📥 API response received:', response.data)
+      const { access_token, user } = response.data
 
-      // Store tokens and user data
-      login(user, access_token, refresh_token)
+      // Store tokens and user data (use access_token as refresh_token for now)
+      console.log('💾 Storing user data and tokens')
+      login(user, access_token, access_token)
+      
+      // Also store in localStorage for compatibility
+      localStorage.setItem('access_token', access_token)
+      console.log('✅ Login successful, token stored')
 
       toast.success("Welcome back!", {
         description: "You have been successfully logged in.",
       })
 
+      console.log('🔄 Calling onSuccess callback')
       onSuccess?.()
     } catch (error) {
+      console.error('❌ Login error:', error)
       const errorMessage = handleApiError(error)
       setError(errorMessage)
       toast.error("Login failed", {
@@ -78,6 +86,20 @@ export function LoginForm({ onSuccess, className }: LoginFormProps) {
     toast.info("Coming soon", {
       description: `${provider} login will be available soon.`,
     })
+  }
+
+  const handleManualSubmit = () => {
+    console.log('🔘 Manual submit triggered')
+    const formData = watch()
+    console.log('📝 Form data:', formData)
+    
+    if (formData.email && formData.password) {
+      console.log('✅ Form has required data, submitting manually')
+      onSubmit(formData)
+    } else {
+      console.log('❌ Form missing required data')
+      toast.error("Please fill in all required fields")
+    }
   }
 
   return (
@@ -218,8 +240,9 @@ export function LoginForm({ onSuccess, className }: LoginFormProps) {
             transition={{ duration: 0.5, delay: 0.6 }}
           >
             <Button
-              type="submit"
-              disabled={!isValid || isSubmitting}
+              type="button"
+              disabled={isSubmitting}
+              onClick={handleManualSubmit}
               className="w-full h-12 bg-gradient-to-r from-blue-500 to-purple-500 hover:from-blue-600 hover:to-purple-600 text-white font-semibold rounded-lg shadow-lg hover:shadow-xl transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {isSubmitting ? (

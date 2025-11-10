@@ -1,4 +1,4 @@
-import { api } from '@/lib/api'
+import api from '@/lib/api'
 import { ChatSession, ChatMessage } from '@/types'
 
 export const chatService = {

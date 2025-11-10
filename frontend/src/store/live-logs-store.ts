@@ -1,18 +1,22 @@
 import { create } from 'zustand'
 import { devtools, persist } from 'zustand/middleware'
+import { useAuthStore } from './auth-store'
 
 export interface LiveLogConnection {
   id: string
-  connection_name: string
-  cloud_provider: 'aws' | 'azure' | 'gcp'
-  status: 'active' | 'paused' | 'error'
-  last_sync_at?: string
+  name: string
+  platform: 'aws' | 'azure' | 'gcp' | 'docker'
+  status: 'active' | 'inactive' | 'error' | 'testing' | 'paused'
+  api_key_prefix: string
+  tenant_id: string
+  last_seen: string | null
+  total_logs_received: number
+  logs_per_minute: number
   created_at: string
-  updated_at?: string
-  logs_per_second?: number
-  logs_today?: number
-  errors_today?: number
-  connection_config?: any
+}
+
+export interface LiveLogConnectionDetail extends LiveLogConnection {
+  api_key?: string // Only available on creation
 }
 
 export interface LogEntry {
@@ -41,87 +45,68 @@ export interface Alert {
 export interface LiveLogsState {
   // Connections
   connections: LiveLogConnection[]
-  activeConnection: LiveLogConnection | null
-  selectedConnectionId: string | null
+  activeConnection: string | null
+  isLoading: boolean
+  error: string | null
   
   // Logs
   logs: LogEntry[]
   filteredLogs: LogEntry[]
-  logBuffer: LogEntry[]
   isStreaming: boolean
   isPaused: boolean
   autoScroll: boolean
   
   // Filters
   logLevels: string[]
-  searchQuery: string
   timeRange: string
   sourceFilter: string
   
-  // View
-  viewMode: 'grid' | 'list'
-  showChat: boolean
-  showAlerts: boolean
-  
-  // WebSocket
-  isConnected: boolean
-  connectionError: string | null
-  reconnectAttempts: number
+  // Stats
+  logsPerSecond: number
+  errorRate: number
   
   // Alerts
   alerts: Alert[]
-  unreadAlerts: number
+  unreadAlerts: Alert[]
   
-  // Stats
-  totalLogsToday: number
-  logsPerSecond: number
-  errorRate: number
-  topErrors: Array<{ message: string; count: number }>
+  // Connection management
+  reconnectAttempts: number
+  
+  // Helper function to get token
+  getToken: () => string | null
   
   // Actions
-  setConnections: (connections: LiveLogConnection[]) => void
-  setActiveConnection: (connection: LiveLogConnection | null) => void
-  addConnection: (connection: LiveLogConnection) => void
-  updateConnection: (id: string, updates: Partial<LiveLogConnection>) => void
-  deleteConnection: (id: string) => void
+  fetchConnections: () => Promise<void>
+  createConnection: (name: string, platform: string, projectId?: string) => Promise<LiveLogConnectionDetail>
+  deleteConnection: (id: string) => Promise<void>
+  testConnection: (tenantId: string, apiKey: string) => Promise<boolean>
+  setActiveConnection: (id: string | null) => void
   
-  addLog: (log: LogEntry) => void
-  addLogs: (logs: LogEntry[]) => void
-  clearLogs: () => void
+  // Streaming actions
   setStreaming: (streaming: boolean) => void
   setPaused: (paused: boolean) => void
   setAutoScroll: (autoScroll: boolean) => void
+  clearLogs: () => void
   
+  // Filter actions
   setLogLevels: (levels: string[]) => void
-  setSearchQuery: (query: string) => void
   setTimeRange: (range: string) => void
   setSourceFilter: (source: string) => void
   applyFilters: () => void
   
-  setViewMode: (mode: 'grid' | 'list') => void
-  setShowChat: (show: boolean) => void
-  setShowAlerts: (show: boolean) => void
+  // Alert actions
+  fetchAlerts: () => Promise<void>
+  markAlertAsRead: (alertId: string) => Promise<void>
+  markAllAlertsAsRead: () => Promise<void>
   
+  // WebSocket actions
+  addLog: (log: LogEntry) => void
+  addAlert: (alert: Alert) => void
+  updateStats: (stats: { logsPerSecond: number; errorRate: number }) => void
   setConnected: (connected: boolean) => void
   setConnectionError: (error: string | null) => void
   incrementReconnectAttempts: () => void
   resetReconnectAttempts: () => void
-  
-  addAlert: (alert: Alert) => void
-  markAlertAsRead: (alertId: string) => void
-  markAllAlertsAsRead: () => void
-  setAlerts: (alerts: Alert[]) => void
-  
-  updateStats: (stats: {
-    totalLogsToday: number
-    logsPerSecond: number
-    errorRate: number
-    topErrors: Array<{ message: string; count: number }>
-  }) => void
-  
-  refreshConnections: () => Promise<void>
-  startStreaming: (connectionId: string) => Promise<void>
-  stopStreaming: (connectionId: string) => Promise<void>
 }
 
 export const useLiveLogsStore = create<LiveLogsState>()(
@@ -131,208 +116,382 @@ export const useLiveLogsStore = create<LiveLogsState>()(
         // Initial state
         connections: [],
         activeConnection: null,
-        selectedConnectionId: null,
-        
+        isLoading: false,
+        error: null,
         logs: [],
         filteredLogs: [],
-        logBuffer: [],
         isStreaming: false,
         isPaused: false,
         autoScroll: true,
-        
-        logLevels: ['DEBUG', 'INFO', 'WARN', 'ERROR', 'CRITICAL'],
-        searchQuery: '',
-        timeRange: 'last_5m',
+        logLevels: [],
+        timeRange: '',
         sourceFilter: '',
-        
-        viewMode: 'grid',
-        showChat: false,
-        showAlerts: false,
-        
-        isConnected: false,
-        connectionError: null,
-        reconnectAttempts: 0,
-        
-        alerts: [],
-        unreadAlerts: 0,
-        
-        totalLogsToday: 0,
         logsPerSecond: 0,
         errorRate: 0,
-        topErrors: [],
-        
+        alerts: [],
+        unreadAlerts: [],
+        reconnectAttempts: 0,
+
+        // Helper function to get token
+        getToken: () => {
+          // Try auth store first (most reliable)
+          const { token } = useAuthStore.getState()
+          if (token) return token
+          
+          // Fallback to localStorage
+          const localToken = localStorage.getItem('access_token')
+          if (localToken) return localToken
+          
+          return null
+        },
+
         // Actions
-        setConnections: (connections) => set({ connections }),
-        setActiveConnection: (connection) => set({ 
-          activeConnection: connection,
-          selectedConnectionId: connection?.id || null
-        }),
-        addConnection: (connection) => set((state) => ({
-          connections: [...state.connections, connection]
-        })),
-        updateConnection: (id, updates) => set((state) => ({
-          connections: state.connections.map(conn => 
-            conn.id === id ? { ...conn, ...updates } : conn
-          ),
-          activeConnection: state.activeConnection?.id === id 
-            ? { ...state.activeConnection, ...updates }
-            : state.activeConnection
-        })),
-        deleteConnection: (id) => set((state) => ({
-          connections: state.connections.filter(conn => conn.id !== id),
-          activeConnection: state.activeConnection?.id === id ? null : state.activeConnection
-        })),
-        
-        addLog: (log) => set((state) => {
-          const newLogs = [log, ...state.logs].slice(0, 10000) // Keep last 10k logs
-          return {
-            logs: newLogs,
-            logBuffer: state.isPaused ? [...state.logBuffer, log] : state.logBuffer
+        fetchConnections: async () => {
+          set({ isLoading: true, error: null })
+          try {
+            const token = get().getToken()
+            
+            if (!token) {
+              throw new Error('No authentication token found. Please log in again.')
+            }
+
+            const response = await fetch('http://localhost:8000/api/v1/live-logs/connections', {
+              headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json',
+              },
+            })
+
+            if (response.status === 401) {
+              // Token expired or invalid - redirect to login
+              localStorage.removeItem('access_token')
+              useAuthStore.getState().logout()
+              window.location.href = '/login'
+              throw new Error('Session expired. Please log in again.')
+            }
+
+            if (!response.ok) {
+              const errorData = await response.json().catch(() => ({}))
+              throw new Error(errorData.detail || 'Failed to fetch connections')
+            }
+
+            const data = await response.json()
+            set({ connections: data, isLoading: false })
+          } catch (error) {
+            set({ error: (error as Error).message, isLoading: false })
           }
-        }),
-        addLogs: (logs) => set((state) => {
-          const newLogs = [...logs, ...state.logs].slice(0, 10000)
-          return {
-            logs: newLogs,
-            logBuffer: state.isPaused ? [...state.logBuffer, ...logs] : state.logBuffer
+        },
+
+        createConnection: async (name: string, platform: string, projectId?: string) => {
+          set({ isLoading: true, error: null })
+          try {
+            const token = get().getToken()
+            
+            if (!token) {
+              throw new Error('No authentication token found. Please log in again.')
+            }
+
+            const response = await fetch('http://localhost:8000/api/v1/live-logs/connections', {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({ name, platform, project_id: projectId }),
+            })
+
+            if (response.status === 401) {
+              // Token expired or invalid - redirect to login
+              localStorage.removeItem('access_token')
+              useAuthStore.getState().logout()
+              window.location.href = '/login'
+              throw new Error('Session expired. Please log in again.')
+            }
+
+            if (!response.ok) {
+              const errorData = await response.json().catch(() => ({}))
+              throw new Error(errorData.detail || 'Failed to create connection')
+            }
+
+            const data = await response.json()
+            
+            // Refresh connections list
+            await get().fetchConnections()
+            
+            set({ isLoading: false })
+            return data
+          } catch (error) {
+            set({ error: (error as Error).message, isLoading: false })
+            throw error
           }
-        }),
-        clearLogs: () => set({ logs: [], filteredLogs: [], logBuffer: [] }),
-        setStreaming: (streaming) => set({ isStreaming: streaming }),
-        setPaused: (paused) => set((state) => ({
-          isPaused: paused,
-          logs: paused ? state.logs : [...state.logs, ...state.logBuffer],
-          logBuffer: paused ? state.logBuffer : []
-        })),
-        setAutoScroll: (autoScroll) => set({ autoScroll }),
-        
-        setLogLevels: (levels) => set({ logLevels: levels }),
-        setSearchQuery: (query) => set({ searchQuery: query }),
-        setTimeRange: (range) => set({ timeRange: range }),
-        setSourceFilter: (source) => set({ sourceFilter: source }),
+        },
+
+        deleteConnection: async (id: string) => {
+          set({ isLoading: true, error: null })
+          try {
+            const token = get().getToken()
+            
+            if (!token) {
+              throw new Error('No authentication token found. Please log in again.')
+            }
+
+            const response = await fetch(`http://localhost:8000/api/v1/live-logs/connections/${id}`, {
+              method: 'DELETE',
+              headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json',
+              },
+            })
+
+            if (response.status === 401) {
+              // Token expired or invalid - redirect to login
+              localStorage.removeItem('access_token')
+              useAuthStore.getState().logout()
+              window.location.href = '/login'
+              throw new Error('Session expired. Please log in again.')
+            }
+
+            if (!response.ok) {
+              const errorData = await response.json().catch(() => ({}))
+              throw new Error(errorData.detail || 'Failed to delete connection')
+            }
+
+            // Refresh connections list
+            await get().fetchConnections()
+            
+            set({ isLoading: false })
+          } catch (error) {
+            set({ error: (error as Error).message, isLoading: false })
+            throw error
+          }
+        },
+
+        testConnection: async (tenantId: string, apiKey: string) => {
+          try {
+            const response = await fetch('http://localhost:8000/api/v1/live-logs/ingest/test', {
+              headers: {
+                'Authorization': `Bearer ${apiKey}`,
+                'X-Tenant-ID': tenantId,
+              },
+            })
+
+            return response.ok
+          } catch (error) {
+            return false
+          }
+        },
+
+        setActiveConnection: (id: string | null) => {
+          set({ activeConnection: id })
+        },
+
+        // Streaming actions
+        setStreaming: (streaming: boolean) => {
+          set({ isStreaming: streaming })
+        },
+
+        setPaused: (paused: boolean) => {
+          set({ isPaused: paused })
+        },
+
+        setAutoScroll: (autoScroll: boolean) => {
+          set({ autoScroll })
+        },
+
+        clearLogs: () => {
+          set({ logs: [], filteredLogs: [] })
+        },
+
+        // Filter actions
+        setLogLevels: (levels: string[]) => {
+          set({ logLevels: levels })
+        },
+
+        setTimeRange: (range: string) => {
+          set({ timeRange: range })
+        },
+
+        setSourceFilter: (source: string) => {
+          set({ sourceFilter: source })
+        },
+
         applyFilters: () => {
-          const state = get()
-          let filtered = state.logs
+          const { logs, logLevels, timeRange, sourceFilter } = get()
+          
+          let filtered = logs
           
           // Filter by log levels
-          if (state.logLevels.length > 0) {
-            filtered = filtered.filter(log => state.logLevels.includes(log.level))
-          }
-          
-          // Filter by search query
-          if (state.searchQuery) {
-            const query = state.searchQuery.toLowerCase()
-            filtered = filtered.filter(log => 
-              log.message.toLowerCase().includes(query) ||
-              log.source?.toLowerCase().includes(query) ||
-              log.service?.toLowerCase().includes(query)
-            )
+          if (logLevels.length > 0) {
+            filtered = filtered.filter(log => logLevels.includes(log.level))
           }
           
           // Filter by source
-          if (state.sourceFilter) {
-            filtered = filtered.filter(log => log.source === state.sourceFilter)
+          if (sourceFilter) {
+            filtered = filtered.filter(log => 
+              log.source?.toLowerCase().includes(sourceFilter.toLowerCase())
+            )
           }
           
           // Filter by time range
-          if (state.timeRange !== 'all') {
-            const now = new Date()
-            let cutoff: Date
-            
-            switch (state.timeRange) {
-              case 'last_5m':
-                cutoff = new Date(now.getTime() - 5 * 60 * 1000)
-                break
-              case 'last_15m':
-                cutoff = new Date(now.getTime() - 15 * 60 * 1000)
-                break
-              case 'last_1h':
-                cutoff = new Date(now.getTime() - 60 * 60 * 1000)
-                break
-              case 'last_6h':
-                cutoff = new Date(now.getTime() - 6 * 60 * 60 * 1000)
-                break
-              case 'last_24h':
-                cutoff = new Date(now.getTime() - 24 * 60 * 60 * 1000)
-                break
-              default:
-                cutoff = new Date(0)
-            }
-            
+          const now = new Date()
+          const timeRanges = {
+            'last_hour': 60 * 60 * 1000,
+            'last_24h': 24 * 60 * 60 * 1000,
+            'last_7d': 7 * 24 * 60 * 60 * 1000,
+            'last_30d': 30 * 24 * 60 * 60 * 1000
+          }
+          
+          if (timeRange in timeRanges) {
+            const cutoff = new Date(now.getTime() - timeRanges[timeRange as keyof typeof timeRanges])
             filtered = filtered.filter(log => new Date(log.timestamp) >= cutoff)
           }
           
           set({ filteredLogs: filtered })
         },
-        
-        setViewMode: (mode) => set({ viewMode: mode }),
-        setShowChat: (show) => set({ showChat: show }),
-        setShowAlerts: (show) => set({ showAlerts: show }),
-        
-        setConnected: (connected) => set({ isConnected: connected }),
-        setConnectionError: (error) => set({ connectionError: error }),
-        incrementReconnectAttempts: () => set((state) => ({
-          reconnectAttempts: state.reconnectAttempts + 1
-        })),
-        resetReconnectAttempts: () => set({ reconnectAttempts: 0 }),
-        
-        addAlert: (alert) => set((state) => ({
-          alerts: [alert, ...state.alerts].slice(0, 1000), // Keep last 1k alerts
-          unreadAlerts: state.unreadAlerts + 1
-        })),
-        markAlertAsRead: (alertId) => set((state) => ({
-          alerts: state.alerts.map(alert => 
-            alert.id === alertId ? { ...alert, is_read: true } : alert
-          ),
-          unreadAlerts: Math.max(0, state.unreadAlerts - 1)
-        })),
-        markAllAlertsAsRead: () => set((state) => ({
-          alerts: state.alerts.map(alert => ({ ...alert, is_read: true })),
-          unreadAlerts: 0
-        })),
-        setAlerts: (alerts) => set((state) => ({
-          alerts,
-          unreadAlerts: alerts.filter(alert => !alert.is_read).length
-        })),
-        
-        updateStats: (stats) => set(stats),
-        
-        refreshConnections: async () => {
+
+        // Alert actions
+        fetchAlerts: async () => {
           try {
-            // This will be implemented with actual API calls
-            // For now, just simulate loading
-            await new Promise(resolve => setTimeout(resolve, 1000))
+            const token = get().getToken()
+            
+            if (!token) {
+              return // Silently fail if no token
+            }
+
+            const response = await fetch('http://localhost:8000/api/v1/live-logs/alerts', {
+              headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json',
+              },
+            })
+
+            if (response.status === 401) {
+              // Token expired - clear and logout
+              localStorage.removeItem('access_token')
+              useAuthStore.getState().logout()
+              return
+            }
+
+            if (response.ok) {
+              const alerts = await response.json()
+              const unreadAlerts = alerts.filter((alert: Alert) => !alert.is_read)
+              set({ alerts, unreadAlerts })
+            }
           } catch (error) {
-            console.error('Failed to refresh connections:', error)
+            console.error('Failed to fetch alerts:', error)
           }
         },
-        
-        startStreaming: async (connectionId) => {
+
+        markAlertAsRead: async (alertId: string) => {
           try {
-            set({ isStreaming: true, isPaused: false })
-            // WebSocket connection logic will be implemented here
+            const token = get().getToken()
+            
+            if (!token) {
+              return // Silently fail if no token
+            }
+
+            const response = await fetch(`http://localhost:8000/api/v1/live-logs/alerts/${alertId}/read`, {
+              method: 'PATCH',
+              headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json',
+              },
+            })
+
+            if (response.status === 401) {
+              // Token expired - clear and logout
+              localStorage.removeItem('access_token')
+              useAuthStore.getState().logout()
+              return
+            }
+
+            if (response.ok) {
+              // Update local state
+              const { alerts } = get()
+              const updatedAlerts = alerts.map(alert => 
+                alert.id === alertId ? { ...alert, is_read: true } : alert
+              )
+              const unreadAlerts = updatedAlerts.filter(alert => !alert.is_read)
+              set({ alerts: updatedAlerts, unreadAlerts })
+            }
           } catch (error) {
-            console.error('Failed to start streaming:', error)
-            set({ isStreaming: false })
+            console.error('Failed to mark alert as read:', error)
           }
         },
-        
-        stopStreaming: async (connectionId) => {
+
+        markAllAlertsAsRead: async () => {
           try {
-            set({ isStreaming: false })
-            // WebSocket disconnection logic will be implemented here
+            const token = get().getToken()
+            
+            if (!token) {
+              return // Silently fail if no token
+            }
+
+            const response = await fetch('http://localhost:8000/api/v1/live-logs/alerts/mark-all-read', {
+              method: 'PATCH',
+              headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json',
+              },
+            })
+
+            if (response.status === 401) {
+              // Token expired - clear and logout
+              localStorage.removeItem('access_token')
+              useAuthStore.getState().logout()
+              return
+            }
+
+            if (response.ok) {
+              // Update local state
+              const { alerts } = get()
+              const updatedAlerts = alerts.map(alert => ({ ...alert, is_read: true }))
+              set({ alerts: updatedAlerts, unreadAlerts: [] })
+            }
           } catch (error) {
-            console.error('Failed to stop streaming:', error)
+            console.error('Failed to mark all alerts as read:', error)
           }
-        }
+        },
+
+        // WebSocket actions
+        addLog: (log: LogEntry) => {
+          const { logs } = get()
+          const newLogs = [log, ...logs].slice(0, 1000) // Keep only last 1000 logs
+          set({ logs: newLogs })
+        },
+
+        addAlert: (alert: Alert) => {
+          const { alerts, unreadAlerts } = get()
+          const newAlerts = [alert, ...alerts]
+          const newUnreadAlerts = [alert, ...unreadAlerts]
+          set({ alerts: newAlerts, unreadAlerts: newUnreadAlerts })
+        },
+
+        updateStats: (stats: { logsPerSecond: number; errorRate: number }) => {
+          set({ logsPerSecond: stats.logsPerSecond, errorRate: stats.errorRate })
+        },
+
+        setConnected: (connected: boolean) => {
+          set({ isStreaming: connected })
+        },
+
+        setConnectionError: (error: string | null) => {
+          set({ error })
+        },
+
+        incrementReconnectAttempts: () => {
+          const { reconnectAttempts } = get()
+          set({ reconnectAttempts: reconnectAttempts + 1 })
+        },
+
+        resetReconnectAttempts: () => {
+          set({ reconnectAttempts: 0 })
+        },
       }),
       {
         name: 'live-logs-store',
         partialize: (state) => ({
-          viewMode: state.viewMode,
-          logLevels: state.logLevels,
-          timeRange: state.timeRange,
-          autoScroll: state.autoScroll
+          connections: state.connections,
         })
       }
     ),

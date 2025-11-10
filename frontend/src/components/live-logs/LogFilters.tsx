@@ -196,7 +196,7 @@ export function LogFilters({ onApply }: LogFiltersProps) {
               <Checkbox
                 id="regex"
                 checked={regexEnabled}
-                onCheckedChange={setRegexEnabled}
+                onCheckedChange={(checked) => setRegexEnabled(checked === true)}
                 className="h-3 w-3"
               />
               <Label htmlFor="regex" className="text-xs cursor-pointer">

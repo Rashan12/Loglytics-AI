@@ -20,6 +20,7 @@ import { Badge } from "@/components/ui/badge"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
 import { useLiveLogsStore } from "@/store/live-logs-store"
+import { cn } from "@/lib/utils"
 
 interface LiveLogChatProps {
   onClose: () => void
@@ -40,11 +41,14 @@ interface ChatMessage {
 export function LiveLogChat({ onClose }: LiveLogChatProps) {
   const { 
     activeConnection, 
+    connections,
     logs, 
-    filteredLogs,
-    logsPerSecond,
+    filteredLogs, 
+    logsPerSecond, 
     errorRate 
   } = useLiveLogsStore()
+  
+  const activeConnectionObj = connections.find(conn => conn.id === activeConnection)
 
   const [messages, setMessages] = React.useState<ChatMessage[]>([])
   const [inputValue, setInputValue] = React.useState("")
@@ -67,7 +71,7 @@ export function LiveLogChat({ onClose }: LiveLogChatProps) {
       const welcomeMessage: ChatMessage = {
         id: 'welcome',
         role: 'assistant',
-        content: `Hello! I'm your live log assistant. I can help you analyze the current log stream from ${activeConnection?.connection_name || 'your connection'}. 
+        content: `Hello! I'm your live log assistant. I can help you analyze the current log stream from ${activeConnectionObj?.name || 'your connection'}. 
 
 Ask me questions like:
 • "What's causing these errors?"
@@ -80,7 +84,7 @@ I have access to ${filteredLogs.length} recent log entries and can provide real-
         context: {
           logsCount: filteredLogs.length,
           timeRange: 'last 5 minutes',
-          connectionName: activeConnection?.connection_name || 'Unknown'
+          connectionName: activeConnectionObj?.name || 'Unknown'
         }
       }
       setMessages([welcomeMessage])
@@ -113,7 +117,7 @@ I have access to ${filteredLogs.length} recent log entries and can provide real-
         context: {
           logsCount: filteredLogs.length,
           timeRange: 'last 5 minutes',
-          connectionName: activeConnection?.connection_name || 'Unknown'
+          connectionName: activeConnectionObj?.name || 'Unknown'
         }
       }
 
@@ -157,7 +161,7 @@ This suggests potential issues with scheduled maintenance tasks or cron jobs run
 • Total logs: ${filteredLogs.length.toLocaleString()}
 • Logs per second: ${logsPerSecond}
 • Time range: Last 5 minutes
-• Connection: ${activeConnection?.connection_name}
+• Connection: ${activeConnectionObj?.name}
 
 **Log Distribution:**
 • INFO: ${Math.floor(filteredLogs.length * 0.6)} logs (60%)
@@ -171,7 +175,7 @@ This suggests potential issues with scheduled maintenance tasks or cron jobs run
 • No critical issues detected in the current stream`
     }
     
-    return `I understand you're asking about "${query}". Based on the current log stream from ${activeConnection?.connection_name}, I can see ${filteredLogs.length} recent log entries. 
+    return `I understand you're asking about "${query}". Based on the current log stream from ${activeConnectionObj?.name}, I can see ${filteredLogs.length} recent log entries. 
 
 The system is currently processing ${logsPerSecond} logs per second with an error rate of ${errorRate.toFixed(2)}%. 
 
@@ -203,7 +207,7 @@ Could you be more specific about what you'd like me to analyze? I can help with 
         {activeConnection && (
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <Activity className="h-3 w-3" />
-            <span>Connected to {activeConnection.connection_name}</span>
+            <span>Connected to {activeConnectionObj?.name}</span>
             <Badge variant="outline" className="text-xs">
               {logsPerSecond} logs/sec
             </Badge>

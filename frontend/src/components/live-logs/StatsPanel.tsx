@@ -140,10 +140,10 @@ export function StatsPanel() {
                     conn.status === 'active' ? 'bg-green-500 animate-pulse' :
                     conn.status === 'paused' ? 'bg-yellow-500' : 'bg-red-500'
                   }`} />
-                  <span className="truncate">{conn.connection_name}</span>
+                  <span className="truncate">{conn.name}</span>
                 </div>
                 <span className="text-xs text-muted-foreground">
-                  {conn.logs_per_second || 0}/s
+                  {conn.logs_per_minute || 0}/min
                 </span>
               </div>
             ))}
@@ -209,12 +209,12 @@ export function StatsPanel() {
                   className="flex items-center justify-between text-sm"
                 >
                   <div className="flex-1 min-w-0">
-                    <div className="truncate" title={error.message}>
-                      {error.message}
+                    <div className="truncate" title={error}>
+                      {error}
                     </div>
                   </div>
                   <Badge variant="destructive" className="text-xs">
-                    {error.count}
+                    {index + 1}
                   </Badge>
                 </motion.div>
               ))}

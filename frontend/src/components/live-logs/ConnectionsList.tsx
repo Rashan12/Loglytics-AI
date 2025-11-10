@@ -32,7 +32,7 @@ export function ConnectionsList() {
     connections, 
     activeConnection, 
     setActiveConnection,
-    addConnection 
+    createConnection 
   } = useLiveLogsStore()
 
   const [searchQuery, setSearchQuery] = React.useState("")
@@ -42,7 +42,7 @@ export function ConnectionsList() {
   // Filter connections based on search and status
   const filteredConnections = React.useMemo(() => {
     return connections.filter(connection => {
-      const matchesSearch = connection.connection_name
+      const matchesSearch = connection.name
         .toLowerCase()
         .includes(searchQuery.toLowerCase())
       
@@ -60,11 +60,11 @@ export function ConnectionsList() {
   }, [connections])
 
   const handleConnectionSelect = (connection: any) => {
-    setActiveConnection(connection)
+    setActiveConnection(connection.id)
   }
 
   const handleNewConnection = (connection: any) => {
-    addConnection(connection)
+    createConnection(connection.name, connection.platform)
     setShowNewDialog(false)
   }
 
@@ -132,7 +132,7 @@ export function ConnectionsList() {
               <motion.div key={connection.id} variants={itemVariants}>
                 <ConnectionCard
                   connection={connection}
-                  isActive={activeConnection?.id === connection.id}
+                  isActive={activeConnection === connection.id}
                   onClick={() => handleConnectionSelect(connection)}
                 />
               </motion.div>

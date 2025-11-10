@@ -40,25 +40,34 @@ export function ChatInput({
   const [content, setContent] = React.useState("")
   const [attachedFiles, setAttachedFiles] = React.useState<FileAttachment[]>([])
   const [isComposing, setIsComposing] = React.useState(false)
+  const [mounted, setMounted] = React.useState(false)
   const textareaRef = React.useRef<HTMLTextAreaElement>(null)
+
+  React.useEffect(() => {
+    setMounted(true)
+  }, [])
 
   // Auto-save draft to localStorage
   React.useEffect(() => {
+    if (!mounted) return
+    
     const draftKey = 'chat-draft'
     const savedDraft = localStorage.getItem(draftKey)
     if (savedDraft && !content) {
       setContent(savedDraft)
     }
-  }, [])
+  }, [mounted])
 
   React.useEffect(() => {
+    if (!mounted) return
+    
     const draftKey = 'chat-draft'
     if (content) {
       localStorage.setItem(draftKey, content)
     } else {
       localStorage.removeItem(draftKey)
     }
-  }, [content])
+  }, [content, mounted])
 
   // Keyboard shortcuts
   React.useEffect(() => {

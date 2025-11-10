@@ -1,233 +1,163 @@
 'use client';
 
-import { useRouter, usePathname } from 'next/navigation';
+import { usePathname } from 'next/navigation';
 import { useUIStore } from '@/store/ui-store';
+import { useAuthStore } from '@/store/auth-store';
+import { motion, AnimatePresence } from 'framer-motion';
 import {
   LayoutDashboard,
-  BarChart3,
   Activity,
   MessageSquare,
-  Search,
-  FileText,
+  FolderOpen,
   Settings,
-  HelpCircle,
   ChevronLeft,
   ChevronRight,
   LogOut,
-  Sparkles,
-  FolderOpen,
+  Search,
+  FileText,
+  BarChart3,
 } from 'lucide-react';
+import { cn } from '@/lib/utils';
+import Link from 'next/link';
 
-const navigationItems = [
-  { 
-    icon: LayoutDashboard, 
-    label: 'Dashboard', 
-    path: '/dashboard',
-    badge: null 
-  },
-  { 
-    icon: FolderOpen, 
-    label: 'Projects', 
-    path: '/dashboard/projects',
-    badge: null 
-  },
-  { 
-    icon: BarChart3, 
-    label: 'Analytics', 
-    path: '/dashboard/analytics',
-    badge: { text: 'New', color: 'green' }
-  },
-  { 
-    icon: Activity, 
-    label: 'Live Logs', 
-    path: '/dashboard/live-logs',
-    badge: { text: 'Beta', color: 'blue' }
-  },
-  { 
-    icon: MessageSquare, 
-    label: 'AI Assistant', 
-    path: '/dashboard/ai',
-    badge: null
-  },
-  { 
-    icon: Search, 
-    label: 'RAG Search', 
-    path: '/dashboard/search',
-    badge: null
-  },
-  { 
-    icon: FileText, 
-    label: 'Log Files', 
-    path: '/dashboard/logs',
-    badge: null
-  },
-];
-
-const bottomNavigationItems = [
-  { icon: Settings, label: 'Settings', path: '/dashboard/settings' },
-  { icon: HelpCircle, label: 'Help', path: '/dashboard/help' },
+const navigation = [
+  { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
+  { name: 'Projects', href: '/dashboard/projects', icon: FolderOpen },
+  { name: 'Analytics', href: '/dashboard/analytics', icon: BarChart3 },
+  { name: 'AI Assistant', href: '/dashboard/ai', icon: MessageSquare },
+  { name: 'RAG Search', href: '/dashboard/rag-search', icon: Search },
+  { name: 'Log Files', href: '/dashboard/log-files', icon: FileText },
+  { name: 'Live Logs', href: '/dashboard/live-logs', icon: Activity },
+  { name: 'Settings', href: '/dashboard/settings', icon: Settings },
 ];
 
 export default function Sidebar() {
   const { sidebarCollapsed: collapsed, toggleSidebar } = useUIStore();
-  const router = useRouter();
+  const { logout } = useAuthStore();
   const pathname = usePathname();
 
-  const isActive = (path: string) => pathname === path;
-
-  const handleLogout = () => {
-    localStorage.removeItem('access_token');
-    localStorage.removeItem('user');
-    router.push('/login');
-  };
-
   return (
-    <aside
-      className={`
-        fixed left-0 top-0 h-screen
-        bg-[#0F1419] border-r border-[#30363D]
-        transition-all duration-300 ease-in-out
-        ${collapsed ? 'w-20' : 'w-72'}
-        flex flex-col
-        z-50
-      `}
+    <motion.aside
+      initial={false}
+      animate={{ width: collapsed ? 80 : 280 }}
+      transition={{ duration: 0.3, ease: [0.4, 0, 0.2, 1] }}
+      className="fixed left-0 top-0 h-screen bg-[#12172A] border-r border-[#1E293B] z-50 flex flex-col"
     >
-      {/* Logo & Brand */}
-      <div className="h-16 flex items-center justify-between px-6 border-b border-[#30363D]">
-        {!collapsed && (
-          <div className="flex items-center gap-3 animate-fadeIn">
-            <div className="w-10 h-10 bg-gradient-to-br from-blue-600 to-purple-600 rounded-lg flex items-center justify-center">
-              <Sparkles className="w-6 h-6 text-white" />
-            </div>
-            <div>
-              <h1 className="text-lg font-bold text-white">Loglytics AI</h1>
-              <p className="text-xs text-gray-400">Intelligent Analytics</p>
-            </div>
-          </div>
-        )}
+      {/* Logo */}
+      <div className="h-20 flex items-center px-6 border-b border-[#1E293B]">
+        <AnimatePresence mode="wait">
+          {!collapsed ? (
+            <motion.div
+              initial={{ opacity: 0, x: -20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+              transition={{ duration: 0.2 }}
+              className="flex items-center gap-3 flex-1"
+            >
+              <div className="relative">
+                <div className="absolute inset-0 bg-gradient-to-r from-[#2E9BFF] to-[#8B5CF6] rounded-xl blur-lg opacity-50" />
+                <div className="relative p-2 bg-gradient-to-br from-[#2E9BFF] to-[#8B5CF6] rounded-xl">
+                  <Activity className="w-5 h-5 text-white" />
+                </div>
+              </div>
+              <div>
+                <h1 className="text-lg font-bold text-[#F9FAFB]">Loglytics AI</h1>
+                <p className="text-xs text-[#64748B]">v1.0.0</p>
+              </div>
+            </motion.div>
+          ) : (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              className="relative mx-auto"
+            >
+              <div className="absolute inset-0 bg-gradient-to-r from-[#2E9BFF] to-[#8B5CF6] rounded-xl blur-lg opacity-50" />
+              <div className="relative p-2 bg-gradient-to-br from-[#2E9BFF] to-[#8B5CF6] rounded-xl">
+                <Activity className="w-5 h-5 text-white" />
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
         
         <button
           onClick={toggleSidebar}
-          className="p-2 rounded-lg hover:bg-[#1C2128] transition-colors"
+          className="p-2 rounded-lg bg-[#1E293B] hover:bg-[#334155] text-[#94A3B8] hover:text-[#2E9BFF] transition-all ml-auto"
         >
-          {collapsed ? (
-            <ChevronRight className="w-5 h-5 text-gray-400" />
-          ) : (
-            <ChevronLeft className="w-5 h-5 text-gray-400" />
-          )}
+          {collapsed ? <ChevronRight className="w-5 h-5" /> : <ChevronLeft className="w-5 h-5" />}
         </button>
       </div>
 
-      {/* Search Bar (when expanded) */}
-      {!collapsed && (
-        <div className="px-4 py-4 animate-fadeIn">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-            <input
-              type="text"
-              placeholder="Search logs, projects..."
-              className="w-full pl-10 pr-4 py-2 bg-[#161B22] border border-[#30363D] rounded-lg text-sm text-gray-300 placeholder-gray-500 focus:outline-none focus:border-blue-600 transition-colors"
-            />
-          </div>
-        </div>
-      )}
+      {/* Navigation */}
+      <nav className="flex-1 px-4 py-6 space-y-1 overflow-y-auto">
+        {navigation.map((item) => {
+          const isActive = pathname === item.href || pathname.startsWith(item.href + '/');
+          const Icon = item.icon;
 
-      {/* Main Navigation */}
-      <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
-        {navigationItems.map((item) => (
-          <button
-            key={item.path}
-            onClick={() => router.push(item.path)}
-            className={`
-              w-full flex items-center gap-3 px-3 py-3 rounded-lg
-              transition-all duration-200
-              ${isActive(item.path)
-                ? 'bg-gradient-to-r from-blue-600 to-blue-700 text-white shadow-lg shadow-blue-600/20'
-                : 'text-gray-400 hover:bg-[#1C2128] hover:text-white'
-              }
-              ${collapsed ? 'justify-center' : ''}
-            `}
-          >
-            <item.icon className="w-5 h-5 flex-shrink-0" />
-            {!collapsed && (
-              <>
-                <span className="flex-1 text-left font-medium text-sm">
-                  {item.label}
-                </span>
-                {item.badge && (
-                  <span className={`
-                    px-2 py-0.5 rounded-full text-xs font-semibold
-                    ${item.badge.color === 'green' 
-                      ? 'bg-green-500/10 text-green-500 border border-green-500/30'
-                      : 'bg-blue-500/10 text-blue-500 border border-blue-500/30'
-                    }
-                  `}>
-                    {item.badge.text}
-                  </span>
+          return (
+            <Link key={item.name} href={item.href}>
+              <motion.div
+                whileHover={{ x: 4 }}
+                transition={{ duration: 0.2 }}
+                className={cn(
+                  'relative flex items-center gap-3 px-3 py-3 rounded-xl transition-all duration-200',
+                  isActive
+                    ? 'bg-gradient-to-r from-[#2E9BFF]/20 to-transparent text-[#2E9BFF]'
+                    : 'text-[#94A3B8] hover:text-[#F9FAFB] hover:bg-[#1E293B]'
                 )}
-              </>
-            )}
-          </button>
-        ))}
+              >
+                {isActive && (
+                  <motion.div
+                    layoutId="activeTab"
+                    className="absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b from-[#2E9BFF] to-[#8B5CF6] rounded-r-full"
+                  />
+                )}
+                
+                <Icon className="w-5 h-5 flex-shrink-0" />
+                
+                <AnimatePresence mode="wait">
+                  {!collapsed && (
+                    <motion.span
+                      initial={{ opacity: 0, x: -10 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      exit={{ opacity: 0, x: -10 }}
+                      transition={{ duration: 0.2 }}
+                      className="text-sm font-medium whitespace-nowrap"
+                    >
+                      {item.name}
+                    </motion.span>
+                  )}
+                </AnimatePresence>
+              </motion.div>
+            </Link>
+          );
+        })}
       </nav>
 
-      {/* Bottom Navigation */}
-      <div className="px-3 py-4 space-y-1 border-t border-[#30363D]">
-        {bottomNavigationItems.map((item) => (
-          <button
-            key={item.path}
-            onClick={() => router.push(item.path)}
-            className={`
-              w-full flex items-center gap-3 px-3 py-3 rounded-lg
-              transition-all duration-200
-              ${isActive(item.path)
-                ? 'bg-gradient-to-r from-blue-600 to-blue-700 text-white'
-                : 'text-gray-400 hover:bg-[#1C2128] hover:text-white'
-              }
-              ${collapsed ? 'justify-center' : ''}
-            `}
-          >
-            <item.icon className="w-5 h-5 flex-shrink-0" />
-            {!collapsed && (
-              <span className="flex-1 text-left font-medium text-sm">
-                {item.label}
-              </span>
-            )}
-          </button>
-        ))}
-        
+      {/* Logout */}
+      <div className="px-4 pb-6 border-t border-[#1E293B] pt-4">
         <button
-          onClick={handleLogout}
-          className={`
-            w-full flex items-center gap-3 px-3 py-3 rounded-lg
-            text-red-400 hover:bg-red-500/10 hover:text-red-300
-            transition-all duration-200
-            ${collapsed ? 'justify-center' : ''}
-          `}
+          onClick={logout}
+          className={cn(
+            'flex items-center gap-3 px-3 py-3 rounded-xl w-full',
+            'text-[#94A3B8] hover:text-[#EF4444] hover:bg-[#1E293B] transition-all duration-200'
+          )}
         >
           <LogOut className="w-5 h-5 flex-shrink-0" />
-          {!collapsed && (
-            <span className="flex-1 text-left font-medium text-sm">
-              Logout
-            </span>
-          )}
+          <AnimatePresence mode="wait">
+            {!collapsed && (
+              <motion.span
+                initial={{ opacity: 0, x: -10 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -10 }}
+                transition={{ duration: 0.2 }}
+                className="text-sm font-medium"
+              >
+                Logout
+              </motion.span>
+            )}
+          </AnimatePresence>
         </button>
       </div>
-
-      {/* User Profile (when expanded) */}
-      {!collapsed && (
-        <div className="px-3 py-4 border-t border-[#30363D] animate-fadeIn">
-          <div className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-[#1C2128] cursor-pointer transition-colors">
-            <div className="w-10 h-10 bg-gradient-to-br from-purple-600 to-pink-600 rounded-full flex items-center justify-center text-white font-semibold">
-              R
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-white truncate">Rashan Dissanayaka</p>
-              <p className="text-xs text-gray-400 truncate">Free Plan</p>
-            </div>
-          </div>
-        </div>
-      )}
-    </aside>
+    </motion.aside>
   );
 }

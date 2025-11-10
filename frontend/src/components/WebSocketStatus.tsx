@@ -6,8 +6,15 @@ export default function WebSocketStatus() {
   const [connected, setConnected] = useState(false);
   const [ws, setWs] = useState<WebSocket | null>(null);
   const [showStatus, setShowStatus] = useState(false);
+  const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  useEffect(() => {
+    if (!mounted) return;
+    
     const user = JSON.parse(localStorage.getItem('user') || '{}');
     const userId = user.id || user.nic_number;
 
@@ -58,8 +65,8 @@ export default function WebSocketStatus() {
     };
   }, []);
 
-  // Don't show status if WebSocket is working fine
-  if (!showStatus) {
+  // Don't show status if WebSocket is working fine or not mounted
+  if (!mounted || !showStatus) {
     return null;
   }
 

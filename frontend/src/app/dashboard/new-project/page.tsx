@@ -3,12 +3,14 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { FolderOpen, ArrowLeft } from 'lucide-react';
+import { useAuthStore } from '@/store/auth-store';
 
 export default function NewProjectPage() {
   const router = useRouter();
+  const { token, isAuthenticated } = useAuthStore();
   const [formData, setFormData] = useState({
-    name: '',
-    description: ''
+    name: 'test',
+    description: 'test'
   });
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
@@ -25,7 +27,14 @@ export default function NewProjectPage() {
     setError('');
 
     try {
-      const token = localStorage.getItem('access_token');
+      if (!isAuthenticated || !token) {
+        setError('You are not authenticated. Please log in first.');
+        setCreating(false);
+        return;
+      }
+
+      console.log('Using token:', token);
+      
       const response = await fetch('http://localhost:8000/api/v1/projects', {
         method: 'POST',
         headers: {
@@ -35,12 +44,16 @@ export default function NewProjectPage() {
         body: JSON.stringify(formData)
       });
 
+      console.log('Response status:', response.status);
+      
       if (response.ok) {
         const project = await response.json();
-        // Redirect to the new project or dashboard
-        router.push('/dashboard');
+        console.log('Project created:', project);
+        // Redirect to the new project details page
+        router.push(`/dashboard/projects/${project.id}`);
       } else {
         const data = await response.json();
+        console.error('Project creation failed:', data);
         setError(data.detail || 'Failed to create project');
       }
     } catch (err) {

@@ -39,19 +39,24 @@ interface ConnectionCardProps {
 const providerIcons = {
   aws: "🟠",
   azure: "🔵", 
-  gcp: "🟢"
+  gcp: "🟢",
+  docker: "🐳"
 }
 
 const statusColors = {
   active: "bg-green-500",
+  inactive: "bg-gray-500",
   paused: "bg-yellow-500",
-  error: "bg-red-500"
+  error: "bg-red-500",
+  testing: "bg-blue-500"
 }
 
 const statusIcons = {
   active: CheckCircle,
+  inactive: Pause,
   paused: Pause,
-  error: AlertTriangle
+  error: AlertTriangle,
+  testing: Activity
 }
 
 export function ConnectionCard({
@@ -65,7 +70,7 @@ export function ConnectionCard({
 }: ConnectionCardProps) {
   const StatusIcon = statusIcons[connection.status]
   
-  const formatLastSync = (lastSync?: string) => {
+  const formatLastSync = (lastSync: string | null) => {
     if (!lastSync) return "Never"
     
     const date = new Date(lastSync)
@@ -104,14 +109,14 @@ export function ConnectionCard({
             <div className="flex items-start justify-between">
               <div className="flex items-center gap-2 min-w-0 flex-1">
                 <span className="text-lg">
-                  {providerIcons[connection.cloud_provider]}
+                  {providerIcons[connection.platform]}
                 </span>
                 <div className="min-w-0 flex-1">
                   <h3 className="font-medium text-sm truncate">
-                    {connection.connection_name}
+                    {connection.name}
                   </h3>
                   <p className="text-xs text-muted-foreground uppercase">
-                    {connection.cloud_provider}
+                    {connection.platform}
                   </p>
                 </div>
               </div>
@@ -182,32 +187,17 @@ export function ConnectionCard({
               <div className="flex items-center gap-1">
                 <Clock className="h-3 w-3 text-muted-foreground" />
                 <span className="text-muted-foreground">
-                  {formatLastSync(connection.last_sync_at)}
+                  {formatLastSync(connection.last_seen)}
                 </span>
               </div>
               <div className="flex items-center gap-1">
                 <Activity className="h-3 w-3 text-muted-foreground" />
                 <span className="text-muted-foreground">
-                  {connection.logs_per_second || 0}/s
+                  {connection.logs_per_minute || 0}/min
                 </span>
               </div>
             </div>
 
-            {/* Quick Stats */}
-            {(connection.logs_today || connection.errors_today) && (
-              <div className="flex gap-2 text-xs">
-                {connection.logs_today && (
-                  <Badge variant="outline" className="text-xs">
-                    {connection.logs_today.toLocaleString()} logs today
-                  </Badge>
-                )}
-                {connection.errors_today && (
-                  <Badge variant="destructive" className="text-xs">
-                    {connection.errors_today} errors
-                  </Badge>
-                )}
-              </div>
-            )}
           </div>
         </CardContent>
       </Card>

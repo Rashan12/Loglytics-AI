@@ -47,9 +47,11 @@ interface ChatState {
   messages: Message[]
   isLoading: boolean
   isStreaming: boolean
+  selectedModel: "local" | "maverick"
   
   // Chat management
   chats: Chat[]
+  chatMessages: Record<string, Message[]>
   
   // Actions
   setCurrentChat: (chat: Chat | null) => void
@@ -57,6 +59,9 @@ interface ChatState {
   updateMessage: (id: string, updates: Partial<Message>) => void
   deleteMessage: (id: string) => void
   clearMessages: () => void
+  
+  // Model selection
+  setSelectedModel: (model: "local" | "maverick") => void
   
   // Chat operations
   createChat: (projectId: string, title: string, model: "local" | "maverick") => void
@@ -117,81 +122,133 @@ export const useChatStore = create<ChatState>()(
       messages: [],
       isLoading: false,
       isStreaming: false,
+      selectedModel: "maverick", // Default to maverick model
       chats: [],
+      
+      // Per-chat message storage
+      chatMessages: {} as Record<string, Message[]>,
 
       // Chat management
       setCurrentChat: (chat) => {
-        set({ currentChat: chat, messages: chat?.messages || [] })
+        const chatId = chat?.id || 'default'
+        const messages = chat ? (get().chatMessages[chatId] || chat.messages || []) : []
+        set({ currentChat: chat, messages })
       },
 
+      // Model selection
+      setSelectedModel: (model) => {
+        set({ selectedModel: model })
+      },
+
+      // Add message helper respects provided id/timestamps
       addMessage: (message) => {
+        const nowIso = new Date().toISOString()
         const newMessage: Message = {
           ...message,
-          id: Math.random().toString(36).substr(2, 9),
-          timestamp: new Date().toISOString(),
+          id: (message as any).id || Math.random().toString(36).substr(2, 9),
+          timestamp: (message as any).timestamp || nowIso,
+          // @ts-ignore attach optional fallbacks used by UI
+          createdAt: (message as any).createdAt || nowIso,
+          // @ts-ignore
+          created_at: (message as any).created_at || nowIso,
         }
-        
-        set((state) => ({
-          messages: [...state.messages, newMessage],
-          currentChat: state.currentChat ? {
-            ...state.currentChat,
-            messages: [
-              ...(state.currentChat.messages || []),  // ✅ Safe with fallback
-              newMessage
-            ],
-            messageCount: (state.currentChat.messageCount || 0) + 1,
-            updatedAt: new Date().toISOString(),
-          } : null,
-        }))
+        set((state) => {
+          const chatId = state.currentChat?.id || 'default'
+          const updatedMessages = [...(state.chatMessages[chatId] || []), newMessage]
+          return {
+            messages: updatedMessages,
+            chatMessages: {
+              ...state.chatMessages,
+              [chatId]: updatedMessages
+            },
+            currentChat: state.currentChat ? {
+              ...state.currentChat,
+              messages: updatedMessages,
+              messageCount: updatedMessages.length,
+              updatedAt: nowIso,
+            } : state.currentChat,
+          }
+        })
       },
 
       updateMessage: (id, updates) => {
-        set((state) => ({
-          messages: state.messages.map((msg) =>
+        set((state) => {
+          const chatId = state.currentChat?.id || 'default'
+          const updatedMessages = state.messages.map((msg) =>
             msg.id === id ? { ...msg, ...updates } : msg
-          ),
-          currentChat: state.currentChat ? {
-            ...state.currentChat,
-            messages: (state.currentChat.messages || []).map((msg) =>
-              msg.id === id ? { ...msg, ...updates } : msg
-            ),
-          } : null,
-        }))
+          )
+          return {
+            messages: [...updatedMessages],
+            chatMessages: {
+              ...state.chatMessages,
+              [chatId]: [...updatedMessages]
+            },
+            currentChat: state.currentChat ? {
+              ...state.currentChat,
+              messages: [...updatedMessages],
+            } : null,
+          }
+        })
       },
 
       deleteMessage: (id) => {
-        set((state) => ({
-          messages: state.messages.filter((msg) => msg.id !== id),
-          currentChat: state.currentChat ? {
-            ...state.currentChat,
-            messages: (state.currentChat.messages || []).filter((msg) => msg.id !== id),
-            messageCount: Math.max(0, (state.currentChat.messageCount || 0) - 1),
-          } : null,
-        }))
+        set((state) => {
+          const chatId = state.currentChat?.id || 'default'
+          const updatedMessages = state.messages.filter((msg) => msg.id !== id)
+          
+          return {
+            messages: updatedMessages,
+            chatMessages: {
+              ...state.chatMessages,
+              [chatId]: updatedMessages
+            },
+            currentChat: state.currentChat ? {
+              ...state.currentChat,
+              messages: updatedMessages,
+              messageCount: Math.max(0, updatedMessages.length),
+            } : null,
+          }
+        })
       },
 
       clearMessages: () => {
-        set((state) => ({
-          messages: [],
-          currentChat: state.currentChat ? {
-            ...state.currentChat,
+        set((state) => {
+          const chatId = state.currentChat?.id || 'default'
+          
+          return {
             messages: [],
-            messageCount: 0,
-          } : null,
-        }))
+            chatMessages: {
+              ...state.chatMessages,
+              [chatId]: []
+            },
+            currentChat: state.currentChat ? {
+              ...state.currentChat,
+              messages: [],
+              messageCount: 0,
+            } : null,
+          }
+        })
       },
 
       // Chat operations
       createChat: (projectId, title, model) => {
+        // Check if chat already exists for this project
+        const existingChat = get().chats.find(c => c.projectId === projectId)
+        if (existingChat) {
+          set({ currentChat: existingChat, messages: get().chatMessages[existingChat.id] || [] })
+          return
+        }
+        
+        const chatId = Math.random().toString(36).substr(2, 9)
         const newChat: Chat = {
-          id: Math.random().toString(36).substr(2, 9),
+          id: chatId,
           title,
           projectId,
           model,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
           messageCount: 0,
-          messages: [],  // ✅ Initialize as empty array
+          messages: [],
         }
         
         set((state) => ({
@@ -223,17 +280,22 @@ export const useChatStore = create<ChatState>()(
       loadChat: (id) => {
         const chat = get().chats.find((c) => c.id === id)
         if (chat) {
-          set({ currentChat: chat, messages: chat.messages })
+          const messages = get().chatMessages[id] || chat.messages || []
+          set({ currentChat: chat, messages })
         }
       },
 
       // Message operations
       sendMessage: async (content, files) => {
-        const { currentChat, addMessage, startStreaming, stopStreaming } = get()
+        const { currentChat, selectedModel, addMessage, startStreaming, stopStreaming } = get()
         
-        if (!currentChat) return
+        // For AI Assistant page, we don't need a currentChat
+        // Use selectedModel instead of currentChat.model
+        const model = currentChat?.model || selectedModel
 
         // Add user message
+        const userMessageId = Math.random().toString(36).substr(2, 9);
+        const now = new Date().toISOString();
         addMessage({
           role: "user",
           content,
@@ -243,88 +305,58 @@ export const useChatStore = create<ChatState>()(
             size: file.size,
             type: file.type,
           })),
-        })
+          id: userMessageId,
+          timestamp: now,
+          createdAt: now,
+          created_at: now,
+        });
 
         // Start streaming
-        startStreaming()
-        
-        // Add assistant message placeholder
-        const assistantMessageId = Math.random().toString(36).substr(2, 9)
+        startStreaming();
+
+        // Add assistant message placeholder with deterministic id
+        const assistantMessageId = `assistant_${userMessageId}`;
         addMessage({
           role: "assistant",
           content: "",
-          model: currentChat.model,
+          model: model,
           isStreaming: true,
-        })
+          id: assistantMessageId,
+          timestamp: now,
+          createdAt: now,
+          created_at: now,
+        });
 
         try {
-          // Upload files if any
-          let uploadedFiles = []
+          // Use the configured API client instead of fetch
+          const api = (await import('@/lib/api')).default
+          
+          
+          const formData = new FormData()
+          
           if (files && files.length > 0) {
-            uploadedFiles = await uploadFiles(files)
+            formData.append('file', files[0])
+            
           }
-
-          // Send message to API
-          const response = await fetch(`/api/v1/chats/${currentChat.id}/messages`, {
-            method: 'POST',
+          
+          formData.append('message', content)
+          
+          const response = await api.post('/chat', formData, {
             headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${localStorage.getItem('access_token')}`,
-            },
-            body: JSON.stringify({
-              content,
-              files: uploadedFiles,
-              model: currentChat.model,
-            }),
+              'Content-Type': undefined // Let Axios set the correct Content-Type for FormData
+            }
           })
 
-          if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`)
-          }
-
-          // Handle streaming response
-          const reader = response.body?.getReader()
-          if (!reader) {
-            throw new Error('No response body')
-          }
-
-          const decoder = new TextDecoder()
-          let currentContent = ""
-
-          while (true) {
-            const { done, value } = await reader.read()
-            if (done) break
-
-            const chunk = decoder.decode(value)
-            const lines = chunk.split('\n')
-
-            for (const line of lines) {
-              if (line.startsWith('data: ')) {
-                try {
-                  const data = JSON.parse(line.slice(6))
-                  
-                  if (data.type === 'content') {
-                    currentContent += data.content
-                    get().updateMessage(assistantMessageId, { content: currentContent })
-                  } else if (data.type === 'citations') {
-                    get().updateMessage(assistantMessageId, { 
-                      content: currentContent,
-                      citations: data.citations 
-                    })
-                  } else if (data.type === 'done') {
-                    get().updateMessage(assistantMessageId, {
-                      content: currentContent,
-                      isStreaming: false,
-                      citations: data.citations || [],
-                    })
-                    break
-                  }
-                } catch (e) {
-                  console.warn('Failed to parse SSE data:', e)
-                }
-              }
-            }
-          }
+          const data = response.data
+          
+          get().updateMessage(assistantMessageId, {
+            content: data.response || "I've analyzed your request. What would you like to know?",
+            isStreaming: false,
+            citations: data.citations || [],
+            timestamp: new Date().toISOString(),
+            createdAt: new Date().toISOString(),
+            created_at: new Date().toISOString(),
+          })
           
         } catch (error) {
           console.error("Error sending message:", error)
@@ -368,6 +400,7 @@ export const useChatStore = create<ChatState>()(
       partialize: (state) => ({
         chats: state.chats,
         currentChat: state.currentChat,
+        chatMessages: state.chatMessages,
       }),
     }
   )

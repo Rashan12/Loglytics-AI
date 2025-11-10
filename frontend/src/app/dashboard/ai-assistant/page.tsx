@@ -1,28 +1,58 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { Send, Sparkles, Copy, ThumbsUp, ThumbsDown, RotateCcw } from 'lucide-react';
-
-interface Message {
-  id: string;
-  role: 'user' | 'assistant';
-  content: string;
-  timestamp: Date;
-}
+import { Send, Sparkles, Copy, ThumbsUp, ThumbsDown, RotateCcw, Upload, Paperclip, X, MessageSquare, Plus, Settings } from 'lucide-react';
+import { API_ENDPOINTS } from '@/config/api';
+import { ChatInput } from '@/components/chat/chat-input';
+import { Message } from '@/components/chat/message';
+import { EmptyChat } from '@/components/chat/empty-chat';
+import { ModelSelector } from '@/components/chat/model-selector';
+import { useChatStore } from '@/store/chat-store';
+import { motion, AnimatePresence } from 'framer-motion';
 
 export default function AIAssistantPage() {
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: '1',
-      role: 'assistant',
-      content: "Hello! I'm your AI assistant for log analysis. I can help you:\n\n• Understand patterns in your logs\n• Detect anomalies and errors\n• Troubleshoot issues\n• Generate insights from log data\n• Answer questions about your applications\n\nWhat would you like to know?",
-      timestamp: new Date()
-    }
-  ]);
-  const [input, setInput] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [showConversations, setShowConversations] = useState(false);
+  const [userSubscription, setUserSubscription] = useState<string>('free');
+  const [showModelSelector, setShowModelSelector] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  
+  const {
+    currentChat,
+    messages,
+    isLoading,
+    isStreaming,
+    chats,
+    setCurrentChat,
+    addMessage,
+    createChat,
+    deleteChat,
+    sendMessage,
+    clearMessages
+  } = useChatStore();
+
+  useEffect(() => {
+    loadUserInfo();
+    // Create a default chat for AI Assistant if none exists
+    if (!currentChat) {
+      createChat('ai-assistant', 'AI Assistant Chat', 'local');
+    }
+  }, []);
+
+  const loadUserInfo = async () => {
+    try {
+      const token = localStorage.getItem('access_token');
+      const response = await fetch('http://localhost:8000/api/v1/auth/me', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      
+      if (response.ok) {
+        const user = await response.json();
+        setUserSubscription(user.subscription_tier || 'free');
+      }
+    } catch (error) {
+      console.error('Error loading user info:', error);
+    }
+  };
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -32,270 +62,248 @@ export default function AIAssistantPage() {
     scrollToBottom();
   }, [messages]);
 
-  useEffect(() => {
-    // Auto-resize textarea
-    if (textareaRef.current) {
-      textareaRef.current.style.height = 'auto';
-      textareaRef.current.style.height = textareaRef.current.scrollHeight + 'px';
-    }
-  }, [input]);
-
-  const handleSend = async () => {
-    if (!input.trim() || loading) return;
-
-    const userMessage: Message = {
-      id: Date.now().toString(),
-      role: 'user',
-      content: input,
-      timestamp: new Date()
-    };
-
-    setMessages(prev => [...prev, userMessage]);
-    setInput('');
-    setLoading(true);
+  const handleSend = async (content: string, files?: File[]) => {
+    if ((!content.trim() && (!files || files.length === 0)) || isLoading) return;
 
     try {
-      const token = localStorage.getItem('access_token');
-      const response = await fetch('http://localhost:8000/api/v1/chat', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({ 
-          message: input,
-          conversation_history: messages.slice(-5) // Last 5 messages for context
-        })
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        const assistantMessage: Message = {
-          id: (Date.now() + 1).toString(),
-          role: 'assistant',
-          content: data.response || "I'm here to help! Please ask me about your logs.",
-          timestamp: new Date()
-        };
-        setMessages(prev => [...prev, assistantMessage]);
-      } else {
-        throw new Error('Failed to get response');
-      }
-    } catch (error) {
-      console.error('Chat error:', error);
-      const errorMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        role: 'assistant',
-        content: "I apologize, but I encountered an error processing your request. Please try again or rephrase your question.",
-        timestamp: new Date()
+      // Use the chat store's sendMessage method
+      await sendMessage(content, files);
+    } catch (error: any) {
+      console.error('❌ Chat error:', error);
+      
+      const errorMessage = {
+        role: 'assistant' as const,
+        content: `I apologize, but I encountered an error: ${error.message || 'Unknown error'}. Please check the console for details and try again.`,
       };
-      setMessages(prev => [...prev, errorMessage]);
-    } finally {
-      setLoading(false);
+      addMessage(errorMessage);
     }
   };
 
-  const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSend();
-    }
+  const startNewConversation = () => {
+    createChat('ai-assistant', 'AI Assistant Chat', userSubscription === 'pro' ? 'maverick' : 'local');
+    clearMessages();
   };
 
-  const handleSuggestionClick = (suggestion: string) => {
-    setInput(suggestion);
-    textareaRef.current?.focus();
+  const deleteConversation = async (chatId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!confirm('Delete this conversation?')) return;
+    
+    deleteChat(chatId);
   };
 
   const copyMessage = (content: string) => {
     navigator.clipboard.writeText(content);
-    // Could add a toast notification here
   };
 
-  const clearChat = () => {
-    setMessages([
-      {
-        id: '1',
-        role: 'assistant',
-        content: "Chat cleared. How can I help you with your logs?",
-        timestamp: new Date()
-      }
-    ]);
+  const handleSuggestionClick = (suggestion: string) => {
+    handleSend(suggestion);
   };
 
   return (
-    <div className="h-[calc(100vh-4rem)] flex flex-col bg-[#0A0E14]">
-      {/* Header */}
-      <div className="bg-[#0F1419] border-b border-[#30363D] px-8 py-4 flex-shrink-0">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-gradient-to-br from-blue-600 to-purple-600 rounded-lg">
-              <Sparkles className="w-6 h-6 text-white" />
-            </div>
-            <div>
-              <h1 className="text-xl font-bold text-white">AI Assistant</h1>
-              <p className="text-sm text-gray-400">Powered by advanced language models</p>
-            </div>
-          </div>
-          
+    <div className="h-[calc(100vh-4rem)] flex bg-gradient-to-br from-[#0A0E14] via-[#0D1117] to-[#0A0E14]">
+      {/* Sidebar - Conversation History */}
+      <div className={`${showConversations ? 'w-80' : 'w-0'} transition-all duration-300 overflow-hidden border-r border-[#30363D]/50 bg-[#0D1117]`}>
+        <div className="p-4 border-b border-[#30363D]/50">
           <button
-            onClick={clearChat}
-            className="flex items-center gap-2 px-4 py-2 bg-[#161B22] border border-[#30363D] rounded-lg text-gray-400 hover:text-white hover:border-blue-600/50 transition-colors"
+            onClick={startNewConversation}
+            className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 rounded-xl text-white font-semibold transition-all shadow-lg"
           >
-            <RotateCcw className="w-4 h-4" />
-            <span className="text-sm">Clear Chat</span>
+            <Plus className="w-5 h-5" />
+            New Chat
           </button>
         </div>
-      </div>
-
-      {/* Messages Area */}
-      <div className="flex-1 overflow-y-auto px-8 py-6">
-        <div className="max-w-4xl mx-auto space-y-6">
-          {messages.map((message, index) => (
-            <div
-              key={message.id}
-              className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'} animate-fadeIn`}
-            >
-              <div className={`flex gap-4 max-w-3xl ${message.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
-                {/* Avatar */}
-                <div className={`flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center font-semibold ${
-                  message.role === 'user'
-                    ? 'bg-gradient-to-br from-purple-600 to-pink-600 text-white'
-                    : 'bg-gradient-to-br from-blue-600 to-purple-600 text-white'
-                }`}>
-                  {message.role === 'user' ? (
-                    <span className="text-sm">U</span>
-                  ) : (
-                    <Sparkles className="w-5 h-5" />
-                  )}
-                </div>
-
-                {/* Message Content */}
-                <div className={`flex-1 ${message.role === 'user' ? 'text-right' : 'text-left'}`}>
-                  <div className={`inline-block p-4 rounded-2xl ${
-                    message.role === 'user'
-                      ? 'bg-blue-600 text-white'
-                      : 'bg-[#161B22] border border-[#30363D] text-gray-100'
-                  }`}>
-                    <p className="text-sm leading-relaxed whitespace-pre-wrap">{message.content}</p>
-                  </div>
-
-                  {/* Message Actions (for assistant messages) */}
-                  {message.role === 'assistant' && index > 0 && (
-                    <div className="flex items-center gap-2 mt-2">
-                      <button
-                        onClick={() => copyMessage(message.content)}
-                        className="p-1.5 hover:bg-[#1C2128] rounded text-gray-500 hover:text-gray-300 transition-colors"
-                        title="Copy message"
-                      >
-                        <Copy className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        className="p-1.5 hover:bg-[#1C2128] rounded text-gray-500 hover:text-green-500 transition-colors"
-                        title="Good response"
-                      >
-                        <ThumbsUp className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        className="p-1.5 hover:bg-[#1C2128] rounded text-gray-500 hover:text-red-500 transition-colors"
-                        title="Poor response"
-                      >
-                        <ThumbsDown className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  )}
-
-                  {/* Timestamp */}
-                  <div className={`mt-1 text-xs text-gray-500 ${message.role === 'user' ? 'text-right' : 'text-left'}`}>
-                    {message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                  </div>
-                </div>
-              </div>
+        
+        <div className="overflow-y-auto h-[calc(100vh-12rem)]">
+          {chats.length === 0 ? (
+            <div className="p-6 text-center">
+              <MessageSquare className="w-12 h-12 text-gray-600 mx-auto mb-3" />
+              <p className="text-sm text-gray-500">No conversations yet</p>
             </div>
-          ))}
-
-          {/* Loading Indicator */}
-          {loading && (
-            <div className="flex justify-start animate-fadeIn">
-              <div className="flex gap-4 max-w-3xl">
-                <div className="flex-shrink-0 w-10 h-10 rounded-full bg-gradient-to-br from-blue-600 to-purple-600 flex items-center justify-center">
-                  <Sparkles className="w-5 h-5 text-white" />
-                </div>
-                <div className="flex-1">
-                  <div className="inline-block p-4 bg-[#161B22] border border-[#30363D] rounded-2xl">
-                    <div className="flex gap-2">
-                      <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" />
-                      <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }} />
-                      <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }} />
+          ) : (
+            <div className="p-2 space-y-2">
+              {chats.map((chat) => (
+                <button
+                  key={chat.id}
+                  onClick={() => setCurrentChat(chat)}
+                  className={`w-full text-left p-3 rounded-xl transition-all group ${
+                    currentChat?.id === chat.id
+                      ? 'bg-gradient-to-r from-blue-600/20 to-purple-600/20 border border-blue-600/30'
+                      : 'hover:bg-[#161B22] border border-transparent'
+                  }`}
+                >
+                  <div className="flex items-start justify-between">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-white truncate mb-1">
+                        {chat.title}
+                      </p>
+                      <p className="text-xs text-gray-500">
+                        {new Date(chat.updatedAt).toLocaleDateString()}
+                      </p>
                     </div>
+                    <button
+                      onClick={(e) => deleteConversation(chat.id, e)}
+                      className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-600/20 rounded-lg text-gray-500 hover:text-red-400 transition-all ml-2"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
                   </div>
-                </div>
-              </div>
+                </button>
+              ))}
             </div>
           )}
-
-          <div ref={messagesEndRef} />
         </div>
       </div>
 
-      {/* Input Area */}
-      <div className="border-t border-[#30363D] bg-[#0F1419] px-8 py-4 flex-shrink-0">
-        <div className="max-w-4xl mx-auto">
-          {/* Suggestions (show when input is empty) */}
-          {input === '' && messages.length <= 1 && (
-            <div className="flex flex-wrap gap-2 mb-3">
-              <button 
-                onClick={() => handleSuggestionClick("Analyze the error patterns in my logs")}
-                className="px-3 py-1.5 bg-[#161B22] border border-[#30363D] rounded-lg text-sm text-gray-400 hover:text-white hover:border-blue-600/50 transition-colors"
+      {/* Main Chat Area */}
+      <div className="flex-1 flex flex-col">
+        {/* Header */}
+        <div className="bg-gradient-to-r from-[#161B22] to-[#1C2128] border-b border-[#30363D]/50 px-8 py-5 flex-shrink-0 backdrop-blur-xl">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <button
+                onClick={() => setShowConversations(!showConversations)}
+                className="p-2 hover:bg-[#1C2128] rounded-xl transition-all"
               >
-                Analyze error patterns
+                <MessageSquare className="w-6 h-6 text-gray-400" />
               </button>
-              <button 
-                onClick={() => handleSuggestionClick("What are the most common issues in my logs?")}
-                className="px-3 py-1.5 bg-[#161B22] border border-[#30363D] rounded-lg text-sm text-gray-400 hover:text-white hover:border-blue-600/50 transition-colors"
+              <div className="relative">
+                <div className="absolute inset-0 bg-gradient-to-r from-blue-600 to-purple-600 rounded-2xl blur-xl opacity-50 animate-pulse"></div>
+                <div className="relative p-3 bg-gradient-to-br from-blue-600 to-purple-600 rounded-2xl shadow-lg">
+                  <Sparkles className="w-7 h-7 text-white" />
+                </div>
+              </div>
+              <div>
+                <h1 className="text-2xl font-bold bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
+                  AI Assistant
+                </h1>
+                <p className="text-sm text-gray-400 mt-0.5">
+                  {userSubscription === 'pro' 
+                    ? 'Powered by Llama 4 Maverick (Cloud)' 
+                    : 'Powered by Llama 3.2 (Local)'}
+                </p>
+              </div>
+            </div>
+            
+            <div className="flex items-center gap-3">
+              {/* Model Selector for Pro users */}
+              {userSubscription === 'pro' && (
+                <button
+                  onClick={() => setShowModelSelector(!showModelSelector)}
+                  className="flex items-center gap-2 px-4 py-2 bg-[#1C2128] hover:bg-[#252C36] border border-[#30363D] hover:border-blue-600/50 rounded-xl text-gray-300 hover:text-white font-medium transition-all"
+                >
+                  <Settings className="w-4 h-4" />
+                  <span className="text-sm">Model</span>
+                </button>
+              )}
+              
+              <button
+                onClick={startNewConversation}
+                className="flex items-center gap-2 px-5 py-2.5 bg-[#1C2128] hover:bg-[#252C36] border border-[#30363D] hover:border-blue-600/50 rounded-xl text-gray-300 hover:text-white font-medium transition-all shadow-lg hover:shadow-blue-600/20"
               >
-                Common issues
-              </button>
-              <button 
-                onClick={() => handleSuggestionClick("Show me performance bottlenecks")}
-                className="px-3 py-1.5 bg-[#161B22] border border-[#30363D] rounded-lg text-sm text-gray-400 hover:text-white hover:border-blue-600/50 transition-colors"
-              >
-                Performance issues
-              </button>
-              <button 
-                onClick={() => handleSuggestionClick("Help me troubleshoot authentication errors")}
-                className="px-3 py-1.5 bg-[#161B22] border border-[#30363D] rounded-lg text-sm text-gray-400 hover:text-white hover:border-blue-600/50 transition-colors"
-              >
-                Troubleshoot auth errors
+                <Plus className="w-4 h-4" />
+                <span className="text-sm">New Chat</span>
               </button>
             </div>
-          )}
-
-          {/* Input Field */}
-          <div className="relative">
-            <textarea
-              ref={textareaRef}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={handleKeyPress}
-              placeholder="Ask me anything about your logs..."
-              rows={1}
-              className="w-full px-4 py-3 pr-14 bg-[#161B22] border border-[#30363D] rounded-xl text-white placeholder-gray-500 resize-none focus:outline-none focus:border-blue-600 transition-all"
-              style={{ minHeight: '52px', maxHeight: '200px' }}
-              disabled={loading}
-            />
-            <button
-              onClick={handleSend}
-              disabled={!input.trim() || loading}
-              className="absolute right-2 bottom-2 p-2.5 bg-blue-600 hover:bg-blue-700 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-            >
-              <Send className="w-5 h-5 text-white" />
-            </button>
           </div>
+        </div>
 
-          {/* Help Text */}
-          <p className="text-xs text-gray-500 mt-2">
-            Press Enter to send, Shift + Enter for new line
-          </p>
+        {/* Model Selector Dropdown */}
+        <AnimatePresence>
+          {showModelSelector && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              className="bg-[#161B22] border-b border-[#30363D]/50 px-8 py-4"
+            >
+              <ModelSelector
+                currentModel={currentChat?.model || 'local'}
+                onModelChange={(model) => {
+                  if (currentChat) {
+                    setCurrentChat({ ...currentChat, model });
+                  }
+                }}
+              />
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Messages Area */}
+        <div className="flex-1 overflow-y-auto px-8 py-6">
+          <div className="max-w-4xl mx-auto">
+            {messages.length === 0 ? (
+              <EmptyChat onSendMessage={handleSend} onSuggestionClick={handleSuggestionClick} />
+            ) : (
+              <div className="space-y-6">
+                {messages.map((message, index) => (
+                  <Message
+                    key={message.id}
+                    message={message}
+                    isLast={index === messages.length - 1}
+                    isStreaming={message.isStreaming || false}
+                  />
+                ))}
+                
+                {/* Loading Indicator */}
+                {isLoading && (
+                  <div className="flex justify-start animate-fadeIn">
+                    <div className="flex gap-4 max-w-3xl">
+                      <div className="flex-shrink-0 w-11 h-11 rounded-2xl bg-gradient-to-br from-blue-600 to-purple-600 flex items-center justify-center shadow-lg">
+                        <Sparkles className="w-5 h-5 text-white" />
+                      </div>
+                      <div className="flex-1">
+                        <div className="inline-block p-5 bg-[#161B22] border border-[#30363D] rounded-2xl shadow-xl">
+                          <div className="flex gap-2">
+                            <div className="w-2.5 h-2.5 bg-blue-500 rounded-full animate-bounce"></div>
+                            <div className="w-2.5 h-2.5 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
+                            <div className="w-2.5 h-2.5 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div ref={messagesEndRef} />
+          </div>
+        </div>
+
+        {/* Input Area */}
+        <div className="border-t border-[#30363D]/50 bg-gradient-to-r from-[#161B22] to-[#1C2128] px-8 py-5 flex-shrink-0 backdrop-blur-xl">
+          <div className="max-w-4xl mx-auto">
+            {/* Suggestions */}
+            {messages.length <= 1 && (
+              <div className="flex flex-wrap gap-2 mb-3">
+                <button 
+                  onClick={() => handleSuggestionClick("Analyze the error patterns in my logs")}
+                  className="px-4 py-2 bg-[#1C2128] hover:bg-[#252C36] border border-[#30363D] hover:border-blue-600/50 rounded-xl text-sm text-gray-400 hover:text-white transition-all shadow-lg"
+                >
+                  Analyze error patterns
+                </button>
+                <button 
+                  onClick={() => handleSuggestionClick("What are the most common issues in my logs?")}
+                  className="px-4 py-2 bg-[#1C2128] hover:bg-[#252C36] border border-[#30363D] hover:border-blue-600/50 rounded-xl text-sm text-gray-400 hover:text-white transition-all shadow-lg"
+                >
+                  Common issues
+                </button>
+                <button 
+                  onClick={() => handleSuggestionClick("Show me performance bottlenecks")}
+                  className="px-4 py-2 bg-[#1C2128] hover:bg-[#252C36] border border-[#30363D] hover:border-blue-600/50 rounded-xl text-sm text-gray-400 hover:text-white transition-all shadow-lg"
+                >
+                  Performance issues
+                </button>
+              </div>
+            )}
+
+            {/* Chat Input Component */}
+            <ChatInput
+              onSendMessage={handleSend}
+              disabled={isLoading}
+              placeholder="Ask me anything about your logs..."
+            />
+          </div>
         </div>
       </div>
     </div>

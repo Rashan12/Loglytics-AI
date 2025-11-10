@@ -4,7 +4,6 @@ from sqlalchemy import select, func, desc
 from typing import List, Optional
 import os
 import uuid
-from datetime import datetime
 import logging
 
 from app.database.session import get_db
@@ -14,7 +13,7 @@ from app.models.log_entry import LogEntry
 from app.services.auth.jwt_handler import get_current_user
 
 logger = logging.getLogger(__name__)
-router = APIRouter()
+router = APIRouter()    
 
 # Directory to store uploaded log files
 UPLOAD_DIR = "uploads"
@@ -99,12 +98,12 @@ async def upload_log_file(
     """Upload a log file for processing"""
     try:
         # Validate file type
-        allowed_extensions = ['.log', '.txt', '.csv']
+        allowed_extensions = ['.log', '.txt', '.csv', '.json']
         file_extension = os.path.splitext(file.filename)[1].lower()
         if file_extension not in allowed_extensions:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid file type. Only .log, .txt, and .csv files are allowed"
+                detail="Invalid file type. Only .log, .txt, .csv, and .json files are allowed"
             )
         
         # Validate file size
@@ -143,40 +142,48 @@ async def upload_log_file(
         await db.commit()
         await db.refresh(log_file)
         
+        # Store ID before async operations to avoid greenlet issues
+        log_file_id_str = str(log_file.id)
+        
         # Process file with parser
         try:
             from app.services.log_parser.log_parser_service import LogParserService
             parser = LogParserService(db)
-            await parser.process_log_file(str(log_file.id))
+            await parser.process_log_file(log_file_id_str)
             logger.info(f"✅ Processed log file: {file.filename}")
         except Exception as e:
             logger.warning(f"Could not process log file: {e}")
         
-        # Index file for RAG
-        try:
-            from app.services.rag.rag_service import RAGService
-            rag_service = RAGService(db)
-            await rag_service.initialize()
-            
-            # Decode content for indexing
-            file_content = content.decode('utf-8', errors='ignore')
-            
-            # Index the log file for RAG
-            await rag_service.index_log_file(
-                log_file_id=str(log_file.id),
-                project_id="default",  # Use "default" for direct uploads
-                user_id=current_user.id,
-                content=file_content,
-                file_type=file_extension[1:]  # Remove the dot
-            )
-            logger.info(f"✅ Indexed log file for RAG: {file.filename}")
-        except Exception as e:
-            logger.warning(f"Could not index log file for RAG: {e}")
+        # Index file for RAG - SKIP for direct uploads (no project_id)
+        # RAG indexing requires a project_id, and direct uploads don't have one
+        # The file will still be stored and can be parsed, just not indexed for RAG searches
+        if log_file.project_id:
+            try:
+                from app.services.rag.rag_service import RAGService
+                rag_service = RAGService(db)
+                await rag_service.initialize()
+                
+                # Decode content for indexing
+                file_content = content.decode('utf-8', errors='ignore')
+                
+                # Index the log file for RAG (only if project_id exists)
+                await rag_service.index_log_file(
+                    log_file_id=log_file_id_str,
+                    project_id=log_file.project_id,
+                    user_id=current_user.id,
+                    content=file_content,
+                    file_type=file_extension[1:]  # Remove the dot
+                )
+                logger.info(f"✅ Indexed log file for RAG: {file.filename}")
+            except Exception as e:
+                logger.warning(f"Could not index log file for RAG: {e}")
+        else:
+            logger.info(f"⏭️ Skipping RAG indexing for direct upload (no project_id): {file.filename}")
         
         logger.info(f"📤 Uploaded log file: {file.filename} ({file_size} bytes)")
         
         return {
-            "id": str(log_file.id),
+            "id": log_file_id_str,
             "filename": file.filename,
             "size": file_size,
             "status": "completed"
@@ -286,3 +293,4 @@ async def download_log_file(
     except Exception as e:
         logger.error(f"❌ Download error: {e}", exc_info=True)
         raise HTTPException(500, f"Failed to download file: {str(e)}")
+

@@ -160,7 +160,7 @@ export function ProfileTab() {
             </CardHeader>
             <CardContent>
               <AvatarUpload
-                currentAvatar={profile?.avatar_url || user?.avatar_url}
+                currentAvatar={profile?.avatar_url}
                 onUpload={handleAvatarUpload}
                 isLoading={isLoading}
               />

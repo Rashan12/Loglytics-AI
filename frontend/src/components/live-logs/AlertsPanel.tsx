@@ -85,9 +85,9 @@ export function AlertsPanel({ onClose }: AlertsPanelProps) {
           <div className="flex items-center gap-2">
             <Bell className="h-5 w-5" />
             <h2 className="text-lg font-semibold">Alerts</h2>
-            {unreadAlerts > 0 && (
+            {unreadAlerts.length > 0 && (
               <Badge variant="destructive" className="text-xs">
-                {unreadAlerts}
+                {unreadAlerts.length}
               </Badge>
             )}
           </div>

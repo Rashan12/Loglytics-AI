@@ -152,16 +152,26 @@ class UnifiedLLMService:
                 
         except Exception as e:
             logger.error(f"Error generating LLM response: {e}")
+            # If no models are available, provide a helpful fallback response
+            if "No LLM models available" in str(e):
+                return LLMResponse(
+                    content="I'm your AI assistant for log analysis. I can help you with log analysis, troubleshooting, and pattern detection. However, I'm currently running in a limited mode. To get full AI capabilities, please configure your OpenRouter API key or ensure Ollama is running locally.",
+                    model_used="fallback",
+                    tokens_used=0,
+                    latency_ms=0,
+                    confidence_score=0.5,
+                    metadata={"error": str(e), "fallback": True}
+                )
             return self._create_error_response(str(e))
     
     async def _select_model(self, user: UserResponse, task: LLMTask) -> str:
         """Select appropriate model based on user tier and availability"""
         # Prioritize OpenRouter (Llama 4 Maverick) as default for all users
         if self._model_availability["openrouter"]:
-            logger.info("Using OpenRouter (Llama 4 Maverick) as default model")
+            logger.info("Using OpenRouter (Llama 4 Maverick) as primary model")
             return "openrouter"
         
-        # Fallback to Ollama for local development
+        # Fallback to Ollama for local development if OpenRouter is not available
         if self._model_availability["ollama"]:
             logger.info("Falling back to Ollama (local) model")
             return "ollama"
@@ -474,9 +484,9 @@ class UnifiedLLMService:
                 "available": self._model_availability["ollama"],
                 "health": await self.ollama_client.health_check() if self._model_availability["ollama"] else False
             },
-            "maverick": {
-                "available": self._model_availability["maverick"],
-                "health": await self.maverick_client.health_check() if self._model_availability["maverick"] else False
+            "openrouter": {
+                "available": self._model_availability["openrouter"],
+                "health": await self.openrouter_client.health_check() if self._model_availability["openrouter"] else False
             }
         }
     
@@ -488,8 +498,13 @@ class UnifiedLLMService:
             ollama_models = await self.ollama_client.list_models()
             models.extend(ollama_models)
         
-        if self._model_availability["maverick"]:
-            maverick_models = await self.maverick_client.list_models()
-            models.extend(maverick_models)
+        if self._model_availability["openrouter"]:
+            # Add OpenRouter model info
+            models.append({
+                "name": "llama-4-maverick",
+                "provider": "openrouter",
+                "type": "cloud",
+                "available": True
+            })
         
         return models

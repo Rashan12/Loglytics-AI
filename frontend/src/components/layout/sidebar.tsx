@@ -11,7 +11,6 @@ import {
   ChevronRight,
   FileText,
   Home,
-  Logs,
   Settings,
   Zap,
   Activity,

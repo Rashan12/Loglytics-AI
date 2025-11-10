@@ -4,7 +4,9 @@ import React from 'react';
 import { motion } from 'framer-motion';
 import { cn } from '@/lib/utils';
 
-interface EnhancedCardProps extends React.HTMLAttributes<HTMLDivElement> {
+interface EnhancedCardProps extends Omit<React.HTMLAttributes<HTMLDivElement>, 
+  'onAnimationStart' | 'onAnimationEnd' | 'onDragStart' | 'onDrag' | 'onDragEnd' | 
+  'onTransitionEnd' | 'onTransitionStart' | 'onTransitionRun' | 'onTransitionCancel'> {
   variant?: 'default' | 'glass' | 'neumorphic' | 'gradient' | 'elevated';
   hover?: boolean;
   glow?: boolean;

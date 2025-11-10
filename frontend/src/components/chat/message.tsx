@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { motion } from "framer-motion"
+import { motion, AnimatePresence } from "framer-motion"
 import {
   User,
   Bot,
@@ -200,130 +200,130 @@ export function Message({ message, isLast, isStreaming = false }: MessageProps) 
   }
 
   // Assistant message
-  return (
-    <motion.div
-      initial={{ opacity: 0, x: -20 }}
-      animate={{ opacity: 1, x: 0 }}
-      transition={{ duration: 0.3 }}
-      className="flex justify-start"
-      data-message-id={message.id}
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
-    >
-      <div className="flex items-start space-x-3 max-w-[80%]">
-        {/* AI avatar */}
-        <div className="w-8 h-8 bg-gradient-to-r from-purple-500 to-pink-500 rounded-full flex items-center justify-center flex-shrink-0">
-          <Bot className="h-4 w-4 text-white" />
-        </div>
-
-        <div className="flex flex-col space-y-2 flex-1">
-          {/* Model badge */}
-          {message.model && (
-            <div className="flex items-center space-x-2">
-              <Badge 
-                variant={message.model === "maverick" ? "default" : "secondary"}
-                size="sm"
-              >
-                {message.model === "maverick" ? (
-                  <>
-                    <Sparkles className="mr-1 h-3 w-3" />
-                    Llama Maverick
-                  </>
-                ) : (
-                  "Local LLM"
-                )}
-              </Badge>
-              {isStreaming && (
-                <Badge variant="outline" size="sm">
-                  Streaming...
-                </Badge>
-              )}
-            </div>
-          )}
-
-          {/* Message content */}
-          <div className="bg-card border border-border rounded-2xl rounded-bl-md px-4 py-3 shadow-sm">
-            <div className="prose prose-sm max-w-none dark:prose-invert">
-              <CodeBlock content={message.content} />
-            </div>
+  if (message.role === "assistant") {
+    return (
+      <motion.div
+        initial={{ opacity: 0, x: -20 }}
+        animate={{ opacity: 1, x: 0 }}
+        transition={{ duration: 0.3 }}
+        className="flex justify-start"
+        data-message-id={message.id}
+        onMouseEnter={() => setIsHovered(true)}
+        onMouseLeave={() => setIsHovered(false)}
+      >
+        <div className="flex items-start space-x-3 max-w-[80%]">
+          {/* AI avatar */}
+          <div className="w-8 h-8 bg-gradient-to-r from-purple-500 to-pink-500 rounded-full flex items-center justify-center flex-shrink-0">
+            <Bot className="h-4 w-4 text-white" />
           </div>
-
-          {/* Citations */}
-          {message.citations && message.citations.length > 0 && (
-            <div className="space-y-2">
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setShowCitations(!showCitations)}
-                className="text-xs text-muted-foreground hover:text-foreground"
-              >
-                {showCitations ? (
-                  <>
-                    <ChevronUp className="mr-1 h-3 w-3" />
-                    Hide {message.citations.length} citations
-                  </>
-                ) : (
-                  <>
-                    <ChevronDown className="mr-1 h-3 w-3" />
-                    Show {message.citations.length} citations
-                  </>
+          <div className="flex flex-col space-y-2 flex-1">
+            {/* Model badge */}
+            {message.model && (
+              <div className="flex items-center space-x-2">
+                <Badge 
+                  variant={message.model === "maverick" ? "default" : "secondary"}
+                  size="sm"
+                >
+                  {message.model === "maverick" ? (
+                    <>
+                      <Sparkles className="mr-1 h-3 w-3" />
+                      Llama Maverick
+                    </>
+                  ) : (
+                    "Local LLM"
+                  )}
+                </Badge>
+                {isStreaming && (
+                  <Badge variant="outline" size="sm">
+                    Streaming...
+                  </Badge>
                 )}
-              </Button>
+              </div>
+            )}
+            {/* Message content */}
+            <div className="bg-card border border-border rounded-2xl rounded-bl-md px-4 py-3 shadow-sm">
+              <div className="prose prose-sm max-w-none dark:prose-invert">
+                <CodeBlock content={typeof message.content === 'string' && message.content.trim() !== '' ? message.content : '[No content]'} />
+              </div>
+            </div>
+
+            {/* Citations */}
+            {message.citations && message.citations.length > 0 && (
+              <div className="space-y-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setShowCitations(!showCitations)}
+                  className="text-xs text-muted-foreground hover:text-foreground"
+                >
+                  {showCitations ? (
+                    <>
+                      <ChevronUp className="mr-1 h-3 w-3" />
+                      Hide {message.citations.length} citations
+                    </>
+                  ) : (
+                    <>
+                      <ChevronDown className="mr-1 h-3 w-3" />
+                      Show {message.citations.length} citations
+                    </>
+                  )}
+                </Button>
+
+                <AnimatePresence>
+                  {showCitations && (
+                    <motion.div
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: "auto" }}
+                      exit={{ opacity: 0, height: 0 }}
+                      transition={{ duration: 0.3 }}
+                      className="space-y-2"
+                    >
+                      {message.citations.map((citation, index) => (
+                        <CitationCard
+                          key={citation.id}
+                          citation={citation}
+                          index={index + 1}
+                        />
+                      ))}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+            )}
+
+            {/* Timestamp and actions */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-2 text-xs text-muted-foreground">
+                <span>{formatTimestamp(message.timestamp || message.createdAt || message.created_at)}</span>
+                {message.content && message.content.length > 100 && (
+                  <span>• {message.content.length} chars</span>
+                )}
+              </div>
 
               <AnimatePresence>
-                {showCitations && (
+                {isHovered && (
                   <motion.div
-                    initial={{ opacity: 0, height: 0 }}
-                    animate={{ opacity: 1, height: "auto" }}
-                    exit={{ opacity: 0, height: 0 }}
-                    transition={{ duration: 0.3 }}
-                    className="space-y-2"
+                    initial={{ opacity: 0, scale: 0.8 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.8 }}
+                    className="flex items-center space-x-1"
                   >
-                    {message.citations.map((citation, index) => (
-                      <CitationCard
-                        key={citation.id}
-                        citation={citation}
-                        index={index + 1}
-                      />
-                    ))}
+                    <MessageActions
+                      message={message}
+                      onCopy={handleCopy}
+                      onEdit={handleEdit}
+                      onRegenerate={handleRegenerate}
+                      onFeedback={handleFeedback}
+                      feedback={feedback}
+                      isLast={isLast}
+                    />
                   </motion.div>
                 )}
               </AnimatePresence>
             </div>
-          )}
-
-          {/* Timestamp and actions */}
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-2 text-xs text-muted-foreground">
-              <span>{formatTimestamp(message.timestamp)}</span>
-              {message.content.length > 100 && (
-                <span>• {message.content.length} chars</span>
-              )}
-            </div>
-
-            <AnimatePresence>
-              {isHovered && (
-                <motion.div
-                  initial={{ opacity: 0, scale: 0.8 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0, scale: 0.8 }}
-                  className="flex items-center space-x-1"
-                >
-                  <MessageActions
-                    message={message}
-                    onCopy={handleCopy}
-                    onEdit={handleEdit}
-                    onRegenerate={handleRegenerate}
-                    onFeedback={handleFeedback}
-                    feedback={feedback}
-                    isLast={isLast}
-                  />
-                </motion.div>
-              )}
-            </AnimatePresence>
           </div>
         </div>
-      </div>
-    </motion.div>
-  )
+      </motion.div>
+    )
+  }
 }

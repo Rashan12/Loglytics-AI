@@ -173,7 +173,7 @@ export function ErrorTrends({ data, className }: ErrorTrendsProps) {
             y={threshold} 
             stroke="#f59e0b" 
             strokeDasharray="5 5"
-            label={{ value: "Threshold", position: "topRight" }}
+            label={{ value: "Threshold", position: "top" }}
           />
           
           {/* Anomaly markers */}

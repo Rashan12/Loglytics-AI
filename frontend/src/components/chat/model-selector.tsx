@@ -60,7 +60,8 @@ export function ModelSelector({ currentModel, onModelChange }: ModelSelectorProp
   const [isOpen, setIsOpen] = React.useState(false)
   const isProUser = user?.subscription_tier === "pro"
 
-  const currentModelConfig = models[currentModel]
+  // Safety check: ensure currentModel exists in models object
+  const currentModelConfig = models[currentModel] || models.maverick // Fallback to maverick
   const CurrentIcon = currentModelConfig.icon
 
   const handleModelChange = (model: "local" | "maverick") => {

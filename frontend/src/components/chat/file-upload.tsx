@@ -148,13 +148,20 @@ export function FileUpload({
     return FileText
   }
 
+  const handleClick = () => {
+    if (!disabled) {
+      fileInputRef.current?.click()
+    }
+  }
+
   return (
     <div className="relative">
       <div
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
-        className="relative"
+        onClick={handleClick}
+        className="relative cursor-pointer"
       >
         {children}
         

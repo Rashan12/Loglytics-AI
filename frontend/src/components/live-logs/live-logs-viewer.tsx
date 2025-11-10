@@ -5,7 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { LogEntry } from '@/types'
-import { formatDate, getLogLevelColor, getLogLevelBgColor, truncateText } from '@/lib/utils'
+import { formatDate, getLogLevelColor, truncateText } from '@/lib/utils'
 import { Activity, Play, Pause, RotateCcw } from 'lucide-react'
 
 export function LiveLogsViewer() {
@@ -165,7 +165,7 @@ export function LiveLogsViewer() {
                           <div className="flex items-center space-x-2 mb-1">
                             <Badge
                               variant="outline"
-                              className={`${getLogLevelBgColor(log.level || '')} ${getLogLevelColor(log.level || '')}`}
+                              className={`${getLogLevelColor(log.level || '')}`}
                             >
                               {log.level || 'UNKNOWN'}
                             </Badge>

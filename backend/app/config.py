@@ -65,7 +65,6 @@ class Settings(BaseSettings):
     JWT_SECRET_KEY: str = Field(default="your-jwt-secret-key-change-this-in-production", env="JWT_SECRET_KEY")
     ENCRYPTION_MASTER_KEY: str = Field(default="change-this-in-production-min-32-chars-required", env="ENCRYPTION_MASTER_KEY")
     ALGORITHM: str = Field(default="HS256", env="JWT_ALGORITHM")
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(default=30, env="JWT_ACCESS_TOKEN_EXPIRE_MINUTES")
     REFRESH_TOKEN_EXPIRE_DAYS: int = Field(default=7, env="JWT_REFRESH_TOKEN_EXPIRE_DAYS")
     
     # CORS

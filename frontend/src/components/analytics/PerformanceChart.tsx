@@ -208,14 +208,14 @@ export function PerformanceChart({ data, className }: PerformanceChartProps) {
             y={200} 
             stroke="#f59e0b" 
             strokeDasharray="5 5"
-            label={{ value: "Slow Response", position: "topRight" }}
+            label={{ value: "Slow Response", position: "top" }}
           />
           <ReferenceLine 
             yAxisId="left"
             y={5} 
             stroke="#ef4444" 
             strokeDasharray="5 5"
-            label={{ value: "High Error Rate", position: "topRight" }}
+            label={{ value: "High Error Rate", position: "top" }}
           />
         </LineChart>
       </ResponsiveContainer>

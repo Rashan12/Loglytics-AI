@@ -1,7 +1,13 @@
 'use client';
 
-import { Book, MessageCircle, FileText, ExternalLink, Search } from 'lucide-react';
-import { useState } from 'react';
+import { Book, MessageCircle, FileText, ExternalLink, Search, Video, MessageSquare, Mail, ChevronRight, HelpCircle } from 'lucide-react';
+import React, { useState } from 'react';
+import { motion } from 'framer-motion';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 
 const faqItems = [
   {
